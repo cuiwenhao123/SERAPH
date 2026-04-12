@@ -1,0 +1,41 @@
+# Rust
+/target/
+**/target/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and temp files
+*.log
+compile_err.log
+smoke_err.log
+.env
+.env.*
+
+# Runtime workspace artifacts
+/workspace/knowledge.json
+/workspace/models.json
+/workspace/coverage.json
+/workspace/target_crate.json
+/workspace/scenario.json
+/workspace/api_mapping.json
+/workspace/contexts/*
+!/workspace/contexts/.gitkeep
+/workspace/plans/*
+!/workspace/plans/.gitkeep
+/workspace/sub_mappings/*
+!/workspace/sub_mappings/.gitkeep
+/workspace/logs/*
+!/workspace/logs/.gitkeep
+/workspace/cache/*
+!/workspace/cache/.gitkeep
+/workspace/reports/*
+!/workspace/reports/.gitkeep
+/workspace/fuzz/*
+!/workspace/fuzz/.gitkeep
+!/workspace/README.md
+!/workspace/.gitignore

@@ -1,0 +1,20 @@
+[workspace]
+members = [
+  "crates/seraph-types",
+  "crates/s3-extract",
+  "crates/s3-model",
+  "crates/s3-context",
+  "crates/s3-coverage",
+  "crates/seraph-cli",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.metadata.seraph]
+stage = "repo-skeleton"
+notes = "Workspace structure is defined before implementation begins."
