@@ -8,6 +8,7 @@
 .vscode/
 *.swp
 *.swo
+.worktrees/
 
 # Logs and temp files
 *.log
