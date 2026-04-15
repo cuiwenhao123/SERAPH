@@ -45,6 +45,7 @@ name = "s3-extract"
 version = "0.1.0"
 dependencies = [
  "seraph-types",
+ "serde",
  "serde_json",
 ]
 

@@ -40,5 +40,7 @@ string_id!(MappingId);
 string_id!(ModuleId);
 string_id!(PlanId);
 string_id!(ScenarioId);
+string_id!(SymbolId);
 string_id!(TraitId);
+string_id!(TraitImplId);
 string_id!(TypeId);

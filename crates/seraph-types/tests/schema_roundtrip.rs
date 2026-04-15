@@ -1,7 +1,10 @@
 use seraph_types::{
-    ApiCoverageStatus, ApiId, CodeRef, CoverageState, ExampleId, FailedAttempt, Knowledge,
-    Level0Summary, ModuleId, ModuleInfo, ModuleTypeRef, NextPriorityItem, RawRiskSurface,
-    ScenarioArtifact, ScenarioType,
+    ApiCoverageStatus, ApiId, ApiInfo, ApiKind, CodeRef, CoverageState, CrateMeta, ExampleAnchor,
+    ExampleId, ExampleInfo, FailedAttempt, FfiApiFact, Knowledge, ModuleId, ModuleInfo,
+    NextPriorityItem, ReprKind, RiskFacts, ScenarioArtifact, ScenarioType, SymbolId, SymbolInfo,
+    SymbolKind, TraitAssociatedTypeBinding, TraitAssociatedTypeDef, TraitExposureKind, TraitId,
+    TraitImplId, TraitImplInfo, TraitImplSurfaceBucket, TraitInfo, TraitOrigin, TypeId, TypeInfo,
+    TypeKind, TypeLayoutFact,
 };
 use std::collections::BTreeMap;
 
@@ -33,55 +36,251 @@ fn scenario_roundtrip_preserves_selected_capabilities() {
 }
 
 #[test]
-fn knowledge_roundtrip_preserves_ids_and_examples() {
+fn knowledge_roundtrip_preserves_trait_graph_and_examples() {
     let knowledge = Knowledge {
-        crate_name: "serde_json".into(),
-        crate_import_name: "serde_json".into(),
-        crate_doc: "JSON serialization file format".into(),
-        public_api_count: 1,
-        default_features: vec!["std".into()],
-        level_0_summary: Level0Summary {
-            one_line: "JSON parser".into(),
-            key_types: vec!["Value".into()],
+        crate_meta: CrateMeta {
+            package_name: "serde_json".into(),
+            lib_target_name: "serde_json".into(),
+            crate_import_name: "serde_json".into(),
+            version: "1.0.0".into(),
+            edition: "2021".into(),
+            rust_version: Some("1.70.0".into()),
+            repository: Some("https://github.com/serde-rs/json".into()),
+            manifest_path: "/tmp/serde_json/Cargo.toml".into(),
+            lib_rs_path: "/tmp/serde_json/src/lib.rs".into(),
+            default_features: vec!["std".into()],
+            cargo_description: Some("JSON serialization file format".into()),
+            root_docs: "Top-level crate docs".into(),
         },
-        level_1_modules: vec![ModuleInfo {
-            module_id: ModuleId::from("mod_001"),
-            path: "serde_json".into(),
-            doc_summary: "top-level entry".into(),
-            types: vec![ModuleTypeRef {
-                type_id: "type_001".into(),
-                name: "Value".into(),
-            }],
-            api_ids: vec![ApiId::from("fn_001")],
-            api_names: vec!["from_str".into()],
-        }],
-        level_2_types: vec![],
-        level_3_apis: vec![],
-        trait_registry: vec![],
-        examples_index: vec![seraph_types::ExampleInfo {
-            example_id: ExampleId::from("ex_001"),
-            source_api_id: ApiId::from("fn_001"),
-            involved_api_ids: vec![ApiId::from("fn_001")],
+        modules: vec![ModuleInfo {
+            module_id: ModuleId::from("mod::serde_json"),
+            name: "serde_json".into(),
+            canonical_path: "serde_json".into(),
+            public_paths: vec!["serde_json".into()],
+            parent_module_id: None,
             code_ref: CodeRef {
                 file: "src/lib.rs".into(),
                 start_line: 1,
-                end_line: 3,
+                end_line: 10,
             },
+            docs: "Top-level entry".into(),
         }],
-        raw_risk_surface: RawRiskSurface {
-            unsafe_functions: vec![],
-            ffi_boundaries: vec![],
-            panic_points: vec![],
-            repr_packed_types: vec![],
-            panic_in_drop_types: vec![],
+        types: vec![TypeInfo {
+            type_id: TypeId::from("type::serde_json::Value"),
+            name: "Value".into(),
+            canonical_path: "serde_json::Value".into(),
+            public_paths: vec!["serde_json::Value".into()],
+            public_anchor_module_id: ModuleId::from("mod::serde_json"),
+            code_ref: CodeRef {
+                file: "src/value.rs".into(),
+                start_line: 10,
+                end_line: 60,
+            },
+            docs: "JSON value enum".into(),
+            kind: TypeKind::Enum,
+            generic_params: vec![],
+            where_clauses: vec![],
+        }],
+        apis: vec![ApiInfo {
+            api_id: ApiId::from("api::serde_json::from_str"),
+            name: "from_str".into(),
+            canonical_path: "serde_json::from_str".into(),
+            public_paths: vec!["serde_json::from_str".into()],
+            public_anchor_module_id: ModuleId::from("mod::serde_json"),
+            owner_type_id: None,
+            owner_trait_id: None,
+            code_ref: CodeRef {
+                file: "src/de.rs".into(),
+                start_line: 100,
+                end_line: 120,
+            },
+            docs: "Parse JSON from a string.".into(),
+            api_kind: ApiKind::FreeFunction,
+            signature_text: "pub fn from_str<T>(s: &str) -> Result<T>".into(),
+            receiver: None,
+            generic_params: vec!["T".into()],
+            where_clauses: vec!["T: DeserializeOwned".into()],
+            arg_types: vec!["&str".into()],
+            return_type: Some("Result<T>".into()),
+            is_unsafe: false,
+            is_async: false,
+            is_const: false,
+            has_body: true,
+            contains_unsafe_block: false,
+        }],
+        symbols: vec![SymbolInfo {
+            symbol_id: SymbolId::from("symbol::serde_json::json"),
+            name: "json".into(),
+            canonical_path: "serde_json::json".into(),
+            public_paths: vec!["serde_json::json".into()],
+            public_anchor_module_id: ModuleId::from("mod::serde_json"),
+            code_ref: CodeRef {
+                file: "src/macros.rs".into(),
+                start_line: 10,
+                end_line: 30,
+            },
+            docs: "Construct a JSON value.".into(),
+            symbol_kind: SymbolKind::Macro,
+            signature_text: Some("macro_rules! json { ($($json:tt)+) => { ... }; }".into()),
+            type_text: None,
+            value_text: None,
+        }],
+        trait_registry: vec![
+            TraitInfo {
+                trait_id: TraitId::from("trait::serde::de::DeserializeOwned"),
+                name: "DeserializeOwned".into(),
+                canonical_path: "serde::de::DeserializeOwned".into(),
+                public_paths: vec![],
+                public_anchor_module_id: None,
+                code_ref: None,
+                docs: String::new(),
+                origin: TraitOrigin::External,
+                exposure_kinds: vec![TraitExposureKind::Bound],
+                is_unsafe: false,
+                direct_supertrait_ids: vec![TraitId::from("trait::serde::de::Deserialize")],
+                required_methods: vec![],
+                provided_methods: vec![],
+                associated_type_defs: vec![TraitAssociatedTypeDef {
+                    name: "Owned".into(),
+                    generic_params: vec![],
+                    where_clauses: vec![],
+                    bounds: vec!["Clone".into()],
+                    default_type: None,
+                    source: None,
+                }],
+                used_by_api_ids: vec![ApiId::from("api::serde_json::from_str")],
+                used_by_trait_ids: vec![TraitId::from("trait::serde_json::TraitSurface")],
+                used_by_type_ids: vec![],
+            },
+            TraitInfo {
+                trait_id: TraitId::from("trait::serde::de::Deserialize"),
+                name: "Deserialize".into(),
+                canonical_path: "serde::de::Deserialize".into(),
+                public_paths: vec![],
+                public_anchor_module_id: None,
+                code_ref: None,
+                docs: String::new(),
+                origin: TraitOrigin::External,
+                exposure_kinds: vec![TraitExposureKind::SupertraitDependency],
+                is_unsafe: false,
+                direct_supertrait_ids: vec![],
+                required_methods: vec!["deserialize".into()],
+                provided_methods: vec![],
+                associated_type_defs: vec![],
+                used_by_api_ids: vec![],
+                used_by_trait_ids: vec![],
+                used_by_type_ids: vec![],
+            },
+        ],
+        trait_impl_registry: vec![TraitImplInfo {
+            trait_impl_id: TraitImplId::from(
+                "trait_impl::core::default::Default::for::serde_json::Value",
+            ),
+            target_type_id: TypeId::from("type::serde_json::Value"),
+            surface_bucket: TraitImplSurfaceBucket::Other,
+            trait_ref_text: "core::default::Default".into(),
+            for_type_text: "Value".into(),
+            trait_id: TraitId::from("trait::core::default::Default"),
+            trait_name: "Default".into(),
+            trait_canonical_path: "core::default::Default".into(),
+            trait_origin: TraitOrigin::External,
+            source: CodeRef {
+                file: "src/value.rs".into(),
+                start_line: 70,
+                end_line: 74,
+            },
+            associated_type_bindings: vec![TraitAssociatedTypeBinding {
+                name: "Output".into(),
+                generic_params: vec![],
+                where_clauses: vec![],
+                bounds: vec![],
+                assigned_type: Some("Value".into()),
+                source: Some(CodeRef {
+                    file: "src/value.rs".into(),
+                    start_line: 71,
+                    end_line: 71,
+                }),
+            }],
+            where_clauses: vec![],
+            is_unsafe: false,
+        }],
+        examples: vec![ExampleInfo {
+            example_id: ExampleId::from("ex::src/de.rs::100::1"),
+            anchor: ExampleAnchor::Api(ApiId::from("api::serde_json::from_str")),
+            involved_api_ids: vec![ApiId::from("api::serde_json::from_str")],
+            code_ref: CodeRef {
+                file: "src/de.rs".into(),
+                start_line: 100,
+                end_line: 110,
+            },
+            snippet: Some("let value = serde_json::from_str::<Value>(raw)?;".into()),
+        }],
+        risk_facts: RiskFacts {
+            ffi_apis: vec![FfiApiFact {
+                api_id: ApiId::from("api::serde_json::ffi_bridge"),
+                abi: "C".into(),
+                source: Some(CodeRef {
+                    file: "src/ffi.rs".into(),
+                    start_line: 1,
+                    end_line: 8,
+                }),
+            }],
+            repr_types: vec![TypeLayoutFact {
+                type_id: TypeId::from("type::serde_json::RawValue"),
+                repr_kinds: vec![ReprKind::Transparent],
+                source: Some(CodeRef {
+                    file: "src/raw.rs".into(),
+                    start_line: 5,
+                    end_line: 5,
+                }),
+            }],
+            drop_impl_types: vec![TypeId::from("type::serde_json::Value")],
         },
     };
 
     let json = serde_json::to_string(&knowledge).unwrap();
     let decoded: Knowledge = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(decoded.level_1_modules[0].module_id.as_str(), "mod_001");
-    assert_eq!(decoded.examples_index[0].example_id.as_str(), "ex_001");
+    assert_eq!(decoded.crate_meta.package_name, "serde_json");
+    assert_eq!(decoded.modules[0].module_id.as_str(), "mod::serde_json");
+    assert_eq!(
+        decoded.symbols[0].symbol_id.as_str(),
+        "symbol::serde_json::json"
+    );
+    assert_eq!(
+        decoded.trait_registry[0].direct_supertrait_ids[0].as_str(),
+        "trait::serde::de::Deserialize"
+    );
+    assert_eq!(
+        decoded.trait_registry[0].associated_type_defs[0].name,
+        "Owned"
+    );
+    assert_eq!(
+        decoded.trait_registry[0].used_by_trait_ids[0].as_str(),
+        "trait::serde_json::TraitSurface"
+    );
+    assert_eq!(
+        decoded.trait_impl_registry[0].trait_impl_id.as_str(),
+        "trait_impl::core::default::Default::for::serde_json::Value"
+    );
+    assert_eq!(
+        decoded.trait_impl_registry[0].associated_type_bindings[0]
+            .assigned_type
+            .as_deref(),
+        Some("Value")
+    );
+    assert_eq!(
+        serde_json::to_string(&decoded.trait_impl_registry[0].surface_bucket).unwrap(),
+        "\"other\""
+    );
+    assert_eq!(
+        decoded.risk_facts.ffi_apis[0].source.as_ref().unwrap().file,
+        "src/ffi.rs"
+    );
+    match &decoded.examples[0].anchor {
+        ExampleAnchor::Api(api_id) => assert_eq!(api_id.as_str(), "api::serde_json::from_str"),
+        other => panic!("unexpected example anchor: {other:?}"),
+    }
 }
 
 #[test]
