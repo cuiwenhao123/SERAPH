@@ -55,3 +55,34 @@ fn models_json_roundtrip_through_s3_model_io() {
 
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn fcg_groups_apis_by_public_anchor_module_and_builds_stage1_summary() {
+    let knowledge: Knowledge =
+        serde_json::from_str(include_str!("fixtures/minimal_knowledge.json")).unwrap();
+
+    let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
+
+    assert_eq!(models.fcg.capabilities.len(), 2);
+    assert_eq!(
+        models
+            .fcg
+            .capability_api_index
+            .get(&seraph_types::CapId::from("cap::demo::io"))
+            .unwrap()
+            .as_slice(),
+        &[seraph_types::ApiId::from("api::demo::io::from_reader")]
+    );
+    assert_eq!(
+        models.fcg.capabilities[0].connects_to,
+        vec![seraph_types::CapId::from("cap::demo::query")]
+    );
+    assert_eq!(
+        models.fcg.capability_chains,
+        vec![vec![
+            seraph_types::CapId::from("cap::demo::io"),
+            seraph_types::CapId::from("cap::demo::query")
+        ]]
+    );
+    assert!(models.fcg.stage1_summary.contains("本库提供 2 项核心能力"));
+}
