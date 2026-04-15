@@ -5,3 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish = false
 description = "Shared schema and stable ID definitions for SERAPH."
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
