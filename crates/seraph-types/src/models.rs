@@ -1,4 +1,4 @@
-use crate::{ApiId, CapId, RiskLevel, TypeId};
+use crate::{ApiId, CapId, RiskLevel, TraitId, TypeId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -30,12 +30,27 @@ pub struct CapabilityNode {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StateLifecycleModel {
+    // Stable local type node that this lifecycle model describes.
     pub type_id: TypeId,
+    // Canonical path copied through for easier human inspection in JSON artifacts.
     pub path: String,
+    // Phase 2 only emits explicit lifecycle entries for simplified/full models.
+    pub model_kind: SlmModelKind,
+    // Ordered state labels used by downstream planners and summaries.
     pub states: Vec<String>,
+    // Deterministic transitions derived from constructor / mutator / closer APIs.
     pub transitions: Vec<StateTransition>,
+    // States where Stage 3 should prefer to exercise core behavior.
     pub fuzzable_states: Vec<String>,
+    // Explicitly illegal transitions backed by docs or other extracted evidence.
     pub forbidden_transitions: Vec<ForbiddenTransition>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SlmModelKind {
+    Full,
+    Simplified,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,13 +70,17 @@ pub struct ForbiddenTransition {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiContract {
+    // Stable API node that this contract row describes.
     pub api_id: ApiId,
+    // Canonical path copied through for easier debugging and fixture readability.
     pub path: String,
     pub preconditions: Vec<String>,
     pub postconditions: Vec<String>,
     pub panic_conditions: Vec<String>,
     pub error_conditions: Vec<String>,
     pub safety: Option<String>,
+    // Deterministic side-effect summary derived from receiver semantics and docs.
+    pub side_effects: Vec<String>,
     pub generic_constraints: Option<GenericConstraints>,
 }
 
@@ -72,11 +91,42 @@ pub struct GenericConstraints {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GenericConstraintParam {
+    // Generic parameter name as written on the API, e.g. `R` or `T`.
     pub name: String,
+    // Direct trait bounds from the API signature / where-clause.
     pub direct_bounds: Vec<String>,
+    // Direct bounds plus supertrait expansion from the Phase 1 trait graph.
+    pub full_bound_chain: Vec<String>,
+    // Associated type requirements that are explicitly recoverable from source facts.
+    pub associated_type_constraints: Vec<AssociatedTypeConstraint>,
+    // True when any bound in the relevant chain is an unsafe trait.
+    pub is_unsafe_trait: bool,
+    // CTS strategy bucket reused by risk aggregation and later planning.
     pub strategy: String,
-    pub bug_hunting_value: String,
+    // Stable severity-like label for how valuable custom instantiation is.
+    pub bug_hunting_value: BugHuntingValue,
+    // Human-readable but deterministic guidance assembled from the known bounds.
     pub synthesis_guidance: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssociatedTypeConstraint {
+    // Best-effort stable trait node when the associated type owner is known.
+    pub trait_id: Option<TraitId>,
+    // Canonical path text of the trait owning the associated type.
+    pub trait_path: String,
+    // Associated type name such as `Item` or `Error`.
+    pub associated_type_name: String,
+    // Rendered bounds declared on the associated type requirement.
+    pub bounds: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum BugHuntingValue {
+    Low,
+    Medium,
+    High,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
