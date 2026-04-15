@@ -1,5 +1,7 @@
 # SERAPH Repository Scaffold Implementation Plan
 
+> Status: Historical planning artifact. This file preserves the repo bootstrap sequence, not the current source of truth for workspace behavior or schema design.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Create a git-managed SERAPH monorepo skeleton with Rust workspace boundaries, runtime directories, placeholder files, and an OpenHarness submodule, without adding business implementation code.

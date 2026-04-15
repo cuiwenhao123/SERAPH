@@ -14,10 +14,37 @@
 //! ```
 
 /// Simple public type for fixture docs.
+///
+/// # Examples
+///
+/// ```
+/// let value = s3_audit_fixture::ExampleType::new();
+/// assert_eq!(value.value(), 7);
+/// ```
 pub struct ExampleType;
 
 /// Tiny public error type used by constructor-shape tests.
 pub struct ExampleError;
+
+/// Public struct with one visible field and one hidden field.
+pub struct ExampleRecord {
+    pub name: &'static str,
+    hidden: usize,
+}
+
+/// Public enum used to verify enum surface extraction.
+#[non_exhaustive]
+pub enum ExampleEnum {
+    Unit,
+    Tuple(usize),
+    #[non_exhaustive]
+    Struct { label: &'static str },
+}
+
+/// Borrowed data holder used to verify borrowed return facts.
+pub struct ExampleHolder<'a> {
+    value: &'a str,
+}
 
 /// Public repr-carrying type used to verify layout fact extraction.
 #[repr(transparent)]
@@ -26,10 +53,22 @@ pub struct ExampleTransparent(pub usize);
 /// Public type with an explicit Drop impl used to verify drop fact extraction.
 pub struct ExampleDrop;
 
+/// Public type with a panic in `Drop` used to verify impl-owned panic facts.
+pub struct ExampleDropPanic;
+
 /// Public type with a manual `Send` impl used to verify unsafe-impl extraction.
 pub struct ExampleSend;
 
 impl ExampleType {
+    /// Public inherent associated const used to verify associated-const surface extraction.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(s3_audit_fixture::ExampleType::DEFAULT_LABEL, "fixture-label");
+    /// ```
+    pub const DEFAULT_LABEL: &'static str = "fixture-label";
+
     /// Constructs the fixture type.
     pub fn new() -> Self {
         Self
@@ -41,6 +80,10 @@ impl ExampleType {
     }
 
     /// Constructs the fixture type through a thin result wrapper.
+    ///
+    /// # Errors
+    ///
+    /// Returns a fixture error when construction fails.
     pub fn wrapped() -> Result<Self, ExampleError> {
         Ok(Self)
     }
@@ -51,11 +94,57 @@ impl ExampleType {
     }
 }
 
+impl ExampleRecord {
+    pub fn new(name: &'static str, hidden: usize) -> Self {
+        Self { name, hidden }
+    }
+
+    pub fn hidden(&self) -> usize {
+        self.hidden
+    }
+}
+
+impl<'a> ExampleHolder<'a> {
+    pub fn new(value: &'a str) -> Self {
+        Self { value }
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.value
+    }
+}
+
 impl Drop for ExampleDrop {
     fn drop(&mut self) {}
 }
 
+impl Drop for ExampleDropPanic {
+    fn drop(&mut self) {
+        panic!("fixture drop panic");
+    }
+}
+
 unsafe impl Send for ExampleSend {}
+
+/// Public trait used to verify associated const extraction.
+///
+/// # Examples
+///
+/// ```
+/// use s3_audit_fixture::{ExampleAssocConst, ExampleType};
+///
+/// assert_eq!(<ExampleType as ExampleAssocConst>::LABEL, "fixture");
+/// assert_eq!(<ExampleType as ExampleAssocConst>::DEFAULT_LIMIT, 7);
+/// ```
+pub trait ExampleAssocConst {
+    const LABEL: &'static str;
+    const DEFAULT_LIMIT: usize = 7;
+}
+
+#[cfg(unix)]
+impl ExampleAssocConst for ExampleType {
+    const LABEL: &'static str = "fixture";
+}
 
 /// Public trait used to verify trait-method extraction.
 pub trait ExampleTrait {
@@ -91,9 +180,23 @@ pub fn use_trait_object(value: &dyn ExampleTrait) -> usize {
     ExampleTrait::provided(value)
 }
 
+/// Public API using lifetime elision across a single borrowed argument.
+pub fn echo_str(value: &str) -> &str {
+    value
+}
+
 /// Public API containing an internal unsafe block while keeping a safe header.
 pub fn uses_unsafe_block(ptr: *const u8) -> Option<u8> {
     unsafe { ptr.as_ref().copied() }
+}
+
+/// Public API with an explicit panic site.
+///
+/// # Panics
+///
+/// Always panics for fixture coverage.
+pub fn panic_now() {
+    panic!("fixture panic");
 }
 
 /// Public extern API used to verify FFI risk-fact extraction.
@@ -115,6 +218,8 @@ macro_rules! fixture_macro {
 }
 
 /// Public constant used to verify constant extraction.
+///
+/// # Examples
 ///
 /// ```
 /// assert_eq!(s3_audit_fixture::SAMPLE_CONST, 7);

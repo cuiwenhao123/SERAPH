@@ -11,7 +11,8 @@ pub struct Knowledge {
     pub types: Vec<TypeInfo>,
     // Public callable surface such as free functions and inherent methods.
     pub apis: Vec<ApiInfo>,
-    // Public macro / constant surface that is neither a nominal type nor a callable API.
+    // Public macro / constant / associated-constant surface that is neither a
+    // nominal type node nor a callable API.
     #[serde(default)]
     pub symbols: Vec<SymbolInfo>,
     // Public-API-relevant trait nodes, not just local `pub trait` items.
@@ -20,9 +21,24 @@ pub struct Knowledge {
     #[serde(default)]
     pub trait_impl_registry: Vec<TraitImplInfo>,
     // Example evidence collected from public item documentation.
+    #[serde(default)]
     pub examples: Vec<ExampleInfo>,
     // Focused risk-related facts that are hard to recover from normalized schema fields alone.
     pub risk_facts: RiskFacts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DocSections {
+    // First paragraph / overview.
+    pub summary: String,
+    // Raw `# Panics` section body when present.
+    pub panics: String,
+    // Raw `# Errors` section body when present.
+    pub errors: String,
+    // Raw `# Safety` section body when present.
+    pub safety: String,
+    // Raw `# Example` / `# Examples` section body when present.
+    pub examples: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +67,9 @@ pub struct CrateMeta {
     pub cargo_description: Option<String>,
     // Top-level crate docs from rustdoc JSON root item.
     pub root_docs: String,
+    // Structured slices of root docs. Empty strings mean the section was absent.
+    #[serde(default)]
+    pub root_doc_sections: DocSections,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +88,9 @@ pub struct ModuleInfo {
     pub code_ref: CodeRef,
     // Rendered rustdoc text for the module item.
     pub docs: String,
+    // Structured slices derived from `docs`.
+    #[serde(default)]
+    pub doc_sections: DocSections,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,12 +111,30 @@ pub struct TypeInfo {
     pub code_ref: CodeRef,
     // Rendered rustdoc text for the type item.
     pub docs: String,
+    // Structured slices derived from `docs`.
+    #[serde(default)]
+    pub doc_sections: DocSections,
     // Normalized category of the public type node.
     pub kind: TypeKind,
     // Generic parameter names declared directly on the type.
     pub generic_params: Vec<String>,
     // Rust-style where-clause text fragments such as `A: Allocator`.
     pub where_clauses: Vec<String>,
+    // Whether the item is annotated with `#[non_exhaustive]`.
+    #[serde(default)]
+    pub is_non_exhaustive: bool,
+    // Recoverable fields for structs/unions and tuple variants.
+    #[serde(default)]
+    pub fields: Vec<TypeFieldInfo>,
+    // Recoverable enum variant surface facts.
+    #[serde(default)]
+    pub variants: Vec<EnumVariantInfo>,
+    // rustdoc JSON may strip private fields while still indicating they exist.
+    #[serde(default)]
+    pub has_hidden_fields: bool,
+    // rustdoc JSON may strip non-public variants while still indicating they exist.
+    #[serde(default)]
+    pub has_hidden_variants: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +145,46 @@ pub enum TypeKind {
     Union,
     TypeAlias,
     Opaque,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeFieldInfo {
+    // 0-based declaration order.
+    pub position: u32,
+    // Named fields use `Some(name)`; tuple fields use `None`.
+    pub name: Option<String>,
+    // Rendered Rust type text.
+    pub type_text: String,
+    // Raw visibility syntax such as `pub`, `pub(crate)`, or `default`.
+    pub visibility_text: String,
+    // Source location when recoverable.
+    pub source: Option<CodeRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumVariantInfo {
+    // Variant short name such as `Ok` or `Null`.
+    pub name: String,
+    // Structural shape of the variant.
+    pub kind: VariantKind,
+    // Whether the variant itself is annotated with `#[non_exhaustive]`.
+    #[serde(default)]
+    pub is_non_exhaustive: bool,
+    // Explicit discriminant text when recoverable.
+    pub discriminant_text: Option<String>,
+    // Variant field surface when present.
+    #[serde(default)]
+    pub fields: Vec<TypeFieldInfo>,
+    // Source location when recoverable.
+    pub source: Option<CodeRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VariantKind {
+    Unit,
+    Tuple,
+    Struct,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +209,9 @@ pub struct ApiInfo {
     pub code_ref: CodeRef,
     // Rendered rustdoc text for the API item.
     pub docs: String,
+    // Structured slices derived from `docs`.
+    #[serde(default)]
+    pub doc_sections: DocSections,
     // Normalized callable category.
     pub api_kind: ApiKind,
     // Human-readable signature text reconstructed from rustdoc JSON.
@@ -143,6 +226,8 @@ pub struct ApiInfo {
     pub arg_types: Vec<String>,
     // Return type text when present.
     pub return_type: Option<String>,
+    // Deterministic structural summary of the return type.
+    pub return_shape: Option<ReturnShape>,
     // Whether the API header is `unsafe`.
     pub is_unsafe: bool,
     // Whether the API header is `async`.
@@ -153,6 +238,7 @@ pub struct ApiInfo {
     // `true` means the method has a default implementation.
     pub has_body: bool,
     // Whether the function body text contains an internal `unsafe {}` block.
+    // This can still be `true` even when `is_unsafe` is `false`.
     #[serde(default)]
     pub contains_unsafe_block: bool,
 }
@@ -168,6 +254,35 @@ pub enum ApiKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReturnShape {
+    // Top-level structural kind of the rendered return type.
+    pub kind: ReturnShapeKind,
+    // Top-level contained types rendered as Rust text, when recoverable.
+    #[serde(default)]
+    pub inner_types: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReturnShapeKind {
+    Unit,
+    Never,
+    Primitive,
+    Nominal,
+    Tuple,
+    Array,
+    Slice,
+    Ref,
+    RefMut,
+    RawPtr,
+    Result,
+    Option,
+    ImplTrait,
+    DynTrait,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolInfo {
     // Stable symbol identifier: `symbol::<canonical_path>`.
     pub symbol_id: SymbolId,
@@ -179,10 +294,16 @@ pub struct SymbolInfo {
     pub public_paths: Vec<String>,
     // Primary public module anchor for this item.
     pub public_anchor_module_id: ModuleId,
+    // Owning nominal type for inherent associated constants. `None` for
+    // top-level constants and macros.
+    pub owner_type_id: Option<TypeId>,
     // Source location of the symbol definition.
     pub code_ref: CodeRef,
     // Rendered rustdoc text for the symbol item.
     pub docs: String,
+    // Structured slices derived from `docs`.
+    #[serde(default)]
+    pub doc_sections: DocSections,
     // Normalized public symbol category.
     pub symbol_kind: SymbolKind,
     // Rendered declaration text for macros when available.
@@ -198,6 +319,7 @@ pub struct SymbolInfo {
 pub enum SymbolKind {
     Macro,
     Constant,
+    AssociatedConstant,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,6 +338,9 @@ pub struct TraitInfo {
     pub code_ref: Option<CodeRef>,
     // Rendered rustdoc text for the trait node when available.
     pub docs: String,
+    // Structured slices derived from `docs`.
+    #[serde(default)]
+    pub doc_sections: DocSections,
     // Relative to the current crate: local definition, public re-export of a
     // non-local trait, or external-only dependency referenced by the public API.
     pub origin: TraitOrigin,
@@ -232,17 +357,21 @@ pub struct TraitInfo {
     // Structured associated type declarations declared by the trait.
     #[serde(default)]
     pub associated_type_defs: Vec<TraitAssociatedTypeDef>,
+    // Structured associated const declarations declared by the trait,
+    // including their declared types and any default values.
+    #[serde(default)]
+    pub associated_const_defs: Vec<TraitAssociatedConstDef>,
     // Explicit reverse edges collected during extraction from public signatures
     // and bounds. These are not derivable from a normalized trait-reference table
     // because Phase 1 still stores clauses as text.
+    #[serde(default)]
     pub used_by_api_ids: Vec<ApiId>,
     // Reverse edges from public trait surfaces whose associated types or
     // public trait methods mention this trait in bounds.
-    // Phase 1 intentionally keeps this at trait granularity only; it does not
-    // further split by specific method or associated-type slot.
     #[serde(default)]
     pub used_by_trait_ids: Vec<TraitId>,
     // Reverse edges from public type declarations that mention this trait in bounds.
+    #[serde(default)]
     pub used_by_type_ids: Vec<TypeId>,
 }
 
@@ -271,11 +400,6 @@ pub struct TraitImplInfo {
     pub trait_impl_id: TraitImplId,
     // Public local nominal type that anchors this impl surface entry.
     pub target_type_id: TypeId,
-    // Coarse bucket used by downstream ranking/selection logic. Phase 1 keeps
-    // the full impl table and adds this hint instead of dropping lower-signal
-    // iterator/view impls during extraction.
-    #[serde(default)]
-    pub surface_bucket: TraitImplSurfaceBucket,
     // Fully rendered trait reference, including trait generic arguments when
     // present, e.g. `core::ops::bit::BitAnd<&HashSet<T, S, A>>`.
     pub trait_ref_text: String,
@@ -294,8 +418,16 @@ pub struct TraitImplInfo {
     // Structured associated type assignments declared inside the impl block.
     #[serde(default)]
     pub associated_type_bindings: Vec<TraitAssociatedTypeBinding>,
+    // Structured associated const assignments declared inside the impl block.
+    // These are the concrete values chosen by this impl, not the trait-level declaration.
+    #[serde(default)]
+    pub associated_const_bindings: Vec<TraitAssociatedConstBinding>,
     // Rust-style where-clause text fragments declared on the impl block.
     pub where_clauses: Vec<String>,
+    // Raw cfg-bearing attrs attached to the impl block, e.g.
+    // `#[cfg(feature = "postgres")]`. Phase 1 keeps the raw text only.
+    #[serde(default)]
+    pub cfg_attrs: Vec<String>,
     // Whether the impl header is `unsafe`.
     pub is_unsafe: bool,
 }
@@ -317,6 +449,18 @@ pub struct TraitAssociatedTypeDef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitAssociatedConstDef {
+    // Short associated const name such as `NAME` or `URL_SCHEMES`.
+    pub name: String,
+    // Rendered declared const type.
+    pub type_text: String,
+    // Default value text when the trait provides one.
+    pub default_value_text: Option<String>,
+    // Source location when recoverable.
+    pub source: Option<CodeRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraitAssociatedTypeBinding {
     // Short associated type name such as `Item` or `Output`.
     pub name: String,
@@ -332,20 +476,14 @@ pub struct TraitAssociatedTypeBinding {
     pub source: Option<CodeRef>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum TraitImplSurfaceBucket {
-    // Core collection/container types such as `HashMap`, `HashSet`, and `HashTable`.
-    PrimaryContainer,
-    // Entry-style cursor APIs and raw-entry helper surface.
-    EntryOrRawEntry,
-    // Iterator, view, set-operation iterator, and similar traversal surface.
-    IteratorOrView,
-    // Error or hasher support types that are public but not containers.
-    ErrorOrHasher,
-    // Escape hatch for public impl surface that does not fit the current coarse buckets.
-    #[default]
-    Other,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitAssociatedConstBinding {
+    // Short associated const name such as `NAME` or `PARAM_CHECKING`.
+    pub name: String,
+    // Concrete value assigned by the impl, if rustdoc exposes it.
+    pub value_text: Option<String>,
+    // Source location when recoverable.
+    pub source: Option<CodeRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -356,6 +494,7 @@ pub struct ExampleInfo {
     // Primary owner of the example snippet.
     pub anchor: ExampleAnchor,
     // Public APIs explicitly associated with this example.
+    // This is a best-effort link set, not a guarantee that only these APIs appear in the snippet.
     pub involved_api_ids: Vec<ApiId>,
     // Source location of the owning item, not the inner line range of the code block.
     pub code_ref: CodeRef,
@@ -375,16 +514,29 @@ pub enum ExampleAnchor {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RiskFacts {
-    // FFI / extern ABI callable boundaries surfaced by the crate.
-    pub ffi_apis: Vec<FfiApiFact>,
+    // Preferred v3 name for public non-Rust-ABI API boundaries.
+    // This is about exposed ABI surface, not internal FFI calls hidden inside implementation code.
+    #[serde(default)]
+    pub extern_abi_apis: Vec<ExternAbiApiFact>,
     // Explicit repr/layout facts collected for public types.
+    #[serde(default)]
     pub repr_types: Vec<TypeLayoutFact>,
     // Public types with explicit Drop implementations.
+    // This records the presence of a Drop impl only; later stages can interpret risk.
+    #[serde(default)]
     pub drop_impl_types: Vec<TypeId>,
+    // Explicit panic-like evidence found by source-span scan.
+    // Only syntactic panic-like sites are recorded here; inferred panic possibility is out of scope.
+    #[serde(default)]
+    pub explicit_panic_sites: Vec<ExplicitPanicSiteFact>,
+    // Signature-level borrowed return facts with no risk interpretation.
+    // This stays as raw evidence so later stages can decide whether it matters semantically.
+    #[serde(default)]
+    pub borrowed_return_apis: Vec<BorrowedReturnFact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FfiApiFact {
+pub struct ExternAbiApiFact {
     // Public API that crosses an FFI / extern ABI boundary.
     pub api_id: ApiId,
     // ABI string such as `C`.
@@ -411,4 +563,40 @@ pub enum ReprKind {
     Packed,
     Align(u32),
     Other(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExplicitPanicSiteFact {
+    // Owning API or impl that contains the explicit panic-like site.
+    pub owner: RiskOwner,
+    // Macro family label such as `panic!` or `assert!`.
+    pub panic_kind: String,
+    // Source location of the evidence.
+    pub source: CodeRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RiskOwner {
+    Api(ApiId),
+    TraitImpl(TraitImplId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BorrowedReturnFact {
+    // API whose return type syntactically borrows from `self` or input arguments.
+    pub api_id: ApiId,
+    // Rendered return type text as seen by downstream consumers.
+    pub return_type_text: String,
+    // True when the returned borrow is tied to the receiver.
+    pub from_self: bool,
+    // 0-based argument positions whose borrow flows into the return type.
+    #[serde(default)]
+    pub from_arg_positions: Vec<u32>,
+    // Explicit lifetime names matched across inputs and output. Can be empty
+    // when the fact comes solely from Rust lifetime elision rules such as `&self -> &T`.
+    #[serde(default)]
+    pub lifetime_names: Vec<String>,
+    // Source location when recoverable.
+    pub source: Option<CodeRef>,
 }

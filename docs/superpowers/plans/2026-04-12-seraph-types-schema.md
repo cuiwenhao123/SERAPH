@@ -1,5 +1,7 @@
 # SERAPH Types Schema Skeleton Implementation Plan
 
+> Status: Historical planning artifact. This file captures an early schema-building plan and may no longer match the active `knowledge.rs` contract.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the first real `seraph-types` crate with stable ID wrappers and JSON schema skeletons for `knowledge.json`, `models.json`, `coverage.json`, and stage artifacts.

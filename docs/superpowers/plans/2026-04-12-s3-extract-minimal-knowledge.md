@@ -1,5 +1,7 @@
 # S3 Extract Minimal Knowledge Implementation Plan
 
+> Status: Historical planning artifact. This file records an earlier implementation path and may mention intermediate scaffolding or superseded details. Do not treat it as the live schema or extractor contract.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make `s3-extract` produce a valid minimal `knowledge.json` artifact and expose a tiny CLI that writes it to disk.
