@@ -3,13 +3,15 @@
 //! Minimal Phase 1 extraction bootstrap for SERAPH.
 
 use seraph_types::{
-    ApiId, ApiInfo, ApiKind, CodeRef, CrateMeta, ExampleAnchor, ExampleId, ExampleInfo, FfiApiFact,
-    Knowledge, ModuleId, ModuleInfo, ReprKind, RiskFacts, SymbolId, SymbolInfo, SymbolKind,
+    ApiId, ApiInfo, ApiKind, BorrowedReturnFact, CodeRef, CrateMeta, DocSections, EnumVariantInfo,
+    ExampleAnchor, ExampleId, ExampleInfo, ExplicitPanicSiteFact, ExternAbiApiFact, Knowledge,
+    ModuleId, ModuleInfo, ReprKind, ReturnShape, ReturnShapeKind, RiskFacts, RiskOwner, SymbolId,
+    SymbolInfo, SymbolKind, TraitAssociatedConstBinding, TraitAssociatedConstDef,
     TraitAssociatedTypeBinding, TraitAssociatedTypeDef, TraitExposureKind, TraitId, TraitImplId,
-    TraitImplInfo, TraitImplSurfaceBucket, TraitInfo, TraitOrigin, TypeId, TypeInfo, TypeKind,
-    TypeLayoutFact,
+    TraitImplInfo, TraitInfo, TraitOrigin, TypeFieldInfo, TypeId, TypeInfo, TypeKind,
+    TypeLayoutFact, VariantKind,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -65,6 +67,7 @@ impl std::error::Error for ExtractError {}
 
 #[derive(Debug, Deserialize)]
 struct MetadataResponse {
+    workspace_root: String,
     packages: Vec<MetadataPackage>,
 }
 
@@ -76,6 +79,7 @@ struct MetadataPackage {
     rust_version: Option<String>,
     repository: Option<String>,
     description: Option<String>,
+    manifest_path: String,
     features: BTreeMap<String, Vec<String>>,
     targets: Vec<MetadataTarget>,
 }
@@ -100,7 +104,7 @@ struct RustdocItem {
     span: Option<RustdocSpan>,
     visibility: String,
     docs: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_rustdoc_attrs")]
     attrs: Vec<String>,
     inner: Value,
 }
@@ -117,6 +121,29 @@ struct RustdocSpan {
     filename: String,
     begin: [u32; 2],
     end: [u32; 2],
+}
+
+fn deserialize_rustdoc_attrs<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Vec::<Value>::deserialize(deserializer)?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|value| rustdoc_attr_to_string(&value))
+        .collect())
+}
+
+fn rustdoc_attr_to_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.clone()),
+        Value::Object(object) => object
+            .get("raw")
+            .and_then(Value::as_str)
+            .or_else(|| object.get("other").and_then(Value::as_str))
+            .map(ToOwned::to_owned),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Default)]
@@ -247,6 +274,7 @@ pub fn build_minimal_knowledge(crate_name: &str) -> Knowledge {
             default_features: Vec::new(),
             cargo_description: None,
             root_docs: String::new(),
+            root_doc_sections: DocSections::default(),
         },
         modules: Vec::new(),
         types: Vec::new(),
@@ -266,11 +294,21 @@ pub fn extract_knowledge_from_manifest(
     let manifest_path_text = manifest_path.to_string_lossy().into_owned();
 
     let (metadata, manifest_execution) = load_metadata_with_fallback(manifest_path)?;
-    let package = metadata
-        .packages
-        .into_iter()
-        .next()
-        .ok_or(ExtractError::MissingPackage)?;
+    let workspace_root = PathBuf::from(&metadata.workspace_root);
+
+    let mut packages = metadata.packages;
+    if packages.is_empty() {
+        return Err(ExtractError::MissingPackage);
+    }
+    // Workspace metadata can list the root package first, so pick the package
+    // whose manifest exactly matches the crate we were asked to extract.
+    let package_index = packages
+        .iter()
+        .position(|package| {
+            Path::new(&package.manifest_path) == manifest_execution.exec_manifest_path
+        })
+        .unwrap_or(0);
+    let package = packages.swap_remove(package_index);
     let lib_target = package
         .targets
         .iter()
@@ -291,6 +329,7 @@ pub fn extract_knowledge_from_manifest(
             default_features: package.features.get("default").cloned().unwrap_or_default(),
             cargo_description: package.description,
             root_docs: String::new(),
+            root_doc_sections: DocSections::default(),
         },
         modules: Vec::new(),
         types: Vec::new(),
@@ -305,11 +344,14 @@ pub fn extract_knowledge_from_manifest(
     let rustdoc = load_rustdoc_json(
         &manifest_execution.exec_manifest_path,
         &knowledge.crate_meta.lib_target_name,
+        &workspace_root,
         manifest_execution.uses_detached_copy(),
     )?;
     let facts = extract_rustdoc_facts(&rustdoc, &knowledge.crate_meta.crate_import_name)?;
 
     knowledge.crate_meta.root_docs = facts.root_docs;
+    knowledge.crate_meta.root_doc_sections =
+        doc_sections_from_docs(&knowledge.crate_meta.root_docs);
     knowledge.modules = facts.modules;
     knowledge.types = facts.types;
     knowledge.apis = facts.apis;
@@ -321,6 +363,7 @@ pub fn extract_knowledge_from_manifest(
     rewrite_knowledge_paths(&mut knowledge, &manifest_execution);
     backfill_api_unsafe_block_presence(&mut knowledge, &manifest_execution.input_crate_dir);
     backfill_trait_impl_unsafety_from_source(&mut knowledge, &manifest_execution.input_crate_dir);
+    backfill_explicit_panic_sites(&mut knowledge, &manifest_execution.input_crate_dir);
 
     Ok(knowledge)
 }
@@ -444,6 +487,7 @@ fn copy_dir_all_for_workspace_fallback(src: &Path, dst: &Path) -> Result<(), Ext
 fn load_rustdoc_json(
     manifest_path: &Path,
     lib_target_name: &str,
+    workspace_root: &Path,
     offline: bool,
 ) -> Result<RustdocResponse, ExtractError> {
     let manifest_path_text = manifest_path.to_string_lossy().into_owned();
@@ -479,14 +523,52 @@ fn load_rustdoc_json(
         return Err(ExtractError::RustdocFailed(stderr));
     }
 
-    let rustdoc_path = manifest_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("target")
-        .join("doc")
-        .join(format!("{lib_target_name}.json"));
-    let raw = fs::read_to_string(rustdoc_path).map_err(ExtractError::RustdocOutputRead)?;
+    // For standalone crates rustdoc usually lands in `<crate>/target/doc`, but
+    // workspace members may emit into the workspace root target directory.
+    let rustdoc_paths = rustdoc_output_candidates(manifest_path, lib_target_name, workspace_root);
+    let raw = read_first_existing_rustdoc_output(&rustdoc_paths)?;
     serde_json::from_str(&raw).map_err(ExtractError::RustdocJson)
+}
+
+fn rustdoc_output_candidates(
+    manifest_path: &Path,
+    lib_target_name: &str,
+    workspace_root: &Path,
+) -> Vec<PathBuf> {
+    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+    let filename = format!("{lib_target_name}.json");
+    let mut candidates = vec![manifest_dir.join("target").join("doc").join(&filename)];
+    let workspace_candidate = workspace_root.join("target").join("doc").join(filename);
+    if workspace_candidate != candidates[0] {
+        candidates.push(workspace_candidate);
+    }
+    candidates
+}
+
+fn read_first_existing_rustdoc_output(paths: &[PathBuf]) -> Result<String, ExtractError> {
+    let mut first_error = None;
+
+    for path in paths {
+        match fs::read_to_string(path) {
+            Ok(raw) => return Ok(raw),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                // Keep trying the fallback locations before surfacing a missing-file error.
+                if first_error.is_none() {
+                    first_error = Some(err);
+                }
+            }
+            Err(err) => return Err(ExtractError::RustdocOutputRead(err)),
+        }
+    }
+
+    Err(ExtractError::RustdocOutputRead(first_error.unwrap_or_else(
+        || {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "rustdoc JSON output was not found in any expected target directory",
+            )
+        },
+    )))
 }
 
 fn extract_rustdoc_facts(
@@ -504,7 +586,8 @@ fn extract_rustdoc_facts(
     let (modules, module_ids) = build_modules(rustdoc, &root_id, crate_import_name, &public_paths)?;
     let (types, type_contexts) = build_types(rustdoc, &module_ids, &public_paths);
     let (apis, api_item_ids) = build_apis(rustdoc, &module_ids, &public_paths, &type_contexts);
-    let (symbols, symbol_item_ids) = build_symbols(rustdoc, &module_ids, &public_paths);
+    let (symbols, symbol_item_ids) =
+        build_symbols(rustdoc, &module_ids, &public_paths, &type_contexts);
     let trait_registry = build_trait_registry(
         rustdoc,
         &module_ids,
@@ -523,7 +606,13 @@ fn extract_rustdoc_facts(
         &symbols,
         &symbol_item_ids,
     );
-    let risk_facts = build_risk_facts(rustdoc, &type_contexts, &api_item_ids, &trait_impl_registry);
+    let risk_facts = build_risk_facts(
+        rustdoc,
+        &type_contexts,
+        &api_item_ids,
+        &trait_impl_registry,
+        &apis,
+    );
 
     Ok(RustdocFacts {
         root_docs,
@@ -705,6 +794,7 @@ fn build_modules(
     for row in module_rows {
         let parent_module_id = parent_path(&row.canonical_path)
             .and_then(|parent_path| module_ids.get(&parent_path).cloned());
+        let doc_sections = doc_sections_from_docs(&row.docs);
 
         modules.push(ModuleInfo {
             module_id: module_ids
@@ -717,6 +807,7 @@ fn build_modules(
             parent_module_id,
             code_ref: row.code_ref,
             docs: row.docs,
+            doc_sections,
         });
     }
 
@@ -758,6 +849,8 @@ fn build_types(
         };
 
         let generics_value = type_generics_value(item);
+        let (fields, variants, has_hidden_fields, has_hidden_variants) =
+            type_surface_from_item(item, rustdoc);
         rows.push(TypeRow {
             item_id: item_id.clone(),
             type_id: type_id_for_path(&canonical_path),
@@ -773,6 +866,11 @@ fn build_types(
             kind: type_kind,
             generic_params: generic_param_names(generics_value),
             where_clauses: where_clause_strings(generics_value),
+            is_non_exhaustive: has_attr(&item.attrs, "non_exhaustive"),
+            fields,
+            variants,
+            has_hidden_fields,
+            has_hidden_variants,
         });
     }
 
@@ -789,6 +887,7 @@ fn build_types(
             public_anchor_module_id: row.public_anchor_module_id.clone(),
         };
         type_contexts.insert(row.item_id.clone(), type_context);
+        let doc_sections = doc_sections_from_docs(&row.docs);
 
         types.push(TypeInfo {
             type_id: row.type_id,
@@ -798,9 +897,15 @@ fn build_types(
             public_anchor_module_id: row.public_anchor_module_id,
             code_ref: row.code_ref,
             docs: row.docs,
+            doc_sections,
             kind: row.kind,
             generic_params: row.generic_params,
             where_clauses: row.where_clauses,
+            is_non_exhaustive: row.is_non_exhaustive,
+            fields: row.fields,
+            variants: row.variants,
+            has_hidden_fields: row.has_hidden_fields,
+            has_hidden_variants: row.has_hidden_variants,
         });
     }
 
@@ -1083,9 +1188,11 @@ fn build_symbols(
     rustdoc: &RustdocResponse,
     module_ids: &BTreeMap<String, ModuleId>,
     public_paths: &PublicPathState,
+    type_contexts: &BTreeMap<String, TypeContext>,
 ) -> (Vec<SymbolInfo>, BTreeMap<String, SymbolId>) {
     let mut symbols = Vec::new();
     let mut symbol_item_ids = BTreeMap::new();
+    let mut seen_symbol_paths = BTreeSet::new();
 
     for (item_id, path_entry) in &rustdoc.paths {
         if path_entry.crate_id != 0 {
@@ -1122,15 +1229,97 @@ fn build_symbols(
             canonical_path,
             public_paths,
             public_anchor_module_id,
+            owner_type_id: None,
             code_ref: code_ref_from_span(item.span.as_ref()),
             docs: item.docs.clone().unwrap_or_default(),
+            doc_sections: doc_sections_from_docs(item.docs.as_deref().unwrap_or_default()),
             symbol_kind,
             signature_text: macro_signature_text(item),
             type_text: constant_type_text(item),
             value_text: constant_value_text(item),
         };
+        seen_symbol_paths.insert(symbol.canonical_path.clone());
         symbol_item_ids.insert(item_id.clone(), symbol.symbol_id.clone());
         symbols.push(symbol);
+    }
+
+    for type_context in type_contexts.values() {
+        let Some(type_item) = rustdoc.index.get(&type_context.item_id) else {
+            continue;
+        };
+
+        for impl_id in type_impl_ids(type_item) {
+            let Some(impl_item) = rustdoc.index.get(&impl_id) else {
+                continue;
+            };
+            let Some(impl_value) = impl_value(impl_item) else {
+                continue;
+            };
+            if impl_value
+                .get("trait")
+                .is_some_and(|value| !value.is_null())
+            {
+                continue;
+            }
+            if impl_value
+                .get("is_synthetic")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+
+            let Some(items) = impl_value.get("items").and_then(Value::as_array) else {
+                continue;
+            };
+
+            for item_id_value in items {
+                let Some(item_id) = value_id_to_string(item_id_value) else {
+                    continue;
+                };
+                let Some(symbol_item) = rustdoc.index.get(&item_id) else {
+                    continue;
+                };
+                if !is_public(symbol_item) || assoc_const_value(symbol_item).is_none() {
+                    continue;
+                }
+
+                let Some(name) = symbol_item.name.clone() else {
+                    continue;
+                };
+                let canonical_path = format!("{}::{name}", type_context.canonical_path);
+                if !seen_symbol_paths.insert(canonical_path.clone()) {
+                    continue;
+                }
+
+                let public_paths = type_context
+                    .public_paths
+                    .iter()
+                    .map(|path| format!("{path}::{name}"))
+                    .collect::<Vec<_>>();
+                let assoc_const = assoc_const_value(symbol_item)
+                    .expect("associated const presence already checked");
+                let symbol = SymbolInfo {
+                    symbol_id: symbol_id_for_path(&canonical_path),
+                    name,
+                    canonical_path,
+                    public_paths,
+                    public_anchor_module_id: type_context.public_anchor_module_id.clone(),
+                    owner_type_id: Some(type_context.type_id.clone()),
+                    code_ref: code_ref_from_span(symbol_item.span.as_ref()),
+                    docs: symbol_item.docs.clone().unwrap_or_default(),
+                    doc_sections: doc_sections_from_docs(
+                        symbol_item.docs.as_deref().unwrap_or_default(),
+                    ),
+                    symbol_kind: SymbolKind::AssociatedConstant,
+                    signature_text: None,
+                    type_text: assoc_const.get("type").map(render_type),
+                    value_text: assoc_const_value_text(assoc_const),
+                };
+                symbol_item_ids.insert(item_id, symbol.symbol_id.clone());
+                symbols.push(symbol);
+            }
+        }
     }
 
     symbols.sort_by(|left, right| left.canonical_path.cmp(&right.canonical_path));
@@ -1162,6 +1351,7 @@ fn build_api_info(
         owner_trait_id,
         code_ref: code_ref_from_span(api_item.span.as_ref()),
         docs: api_item.docs.clone().unwrap_or_default(),
+        doc_sections: doc_sections_from_docs(api_item.docs.as_deref().unwrap_or_default()),
         api_kind,
         signature_text: signature_text(
             &name,
@@ -1174,6 +1364,7 @@ fn build_api_info(
         where_clauses: where_clause_strings(function_value.get("generics")),
         arg_types,
         return_type,
+        return_shape: return_shape_from_function(function_value),
         is_unsafe: function_header_flag(function_value, "is_unsafe"),
         is_async: function_header_flag(function_value, "is_async"),
         is_const: function_header_flag(function_value, "is_const"),
@@ -1229,6 +1420,7 @@ fn build_trait_registry(
                     .as_ref()
                     .map(|span| code_ref_from_span(Some(span))),
                 docs: item.docs.clone().unwrap_or_default(),
+                doc_sections: doc_sections_from_docs(item.docs.as_deref().unwrap_or_default()),
                 origin: TraitOrigin::Local,
                 exposure_kinds: vec![TraitExposureKind::Defined],
                 is_unsafe: trait_value(item)
@@ -1239,6 +1431,7 @@ fn build_trait_registry(
                 required_methods: trait_method_names(item, rustdoc, "required"),
                 provided_methods: trait_method_names(item, rustdoc, "provided"),
                 associated_type_defs: trait_associated_type_defs(item, rustdoc),
+                associated_const_defs: trait_associated_const_defs(item, rustdoc),
                 used_by_api_ids: Vec::new(),
                 used_by_trait_ids: Vec::new(),
                 used_by_type_ids: Vec::new(),
@@ -1276,6 +1469,7 @@ fn build_trait_registry(
                 ),
                 code_ref: None,
                 docs: String::new(),
+                doc_sections: DocSections::default(),
                 origin: TraitOrigin::Reexported,
                 exposure_kinds: vec![TraitExposureKind::Reexported],
                 is_unsafe: false,
@@ -1283,6 +1477,7 @@ fn build_trait_registry(
                 required_methods: Vec::new(),
                 provided_methods: Vec::new(),
                 associated_type_defs: Vec::new(),
+                associated_const_defs: Vec::new(),
                 used_by_api_ids: Vec::new(),
                 used_by_trait_ids: Vec::new(),
                 used_by_type_ids: Vec::new(),
@@ -1472,7 +1667,6 @@ fn build_trait_impl_registry(
                 TraitImplInfo {
                     trait_impl_id,
                     target_type_id: target_type_context.type_id.clone(),
-                    surface_bucket: classify_trait_impl_surface_bucket(target_type_context),
                     trait_ref_text,
                     for_type_text,
                     trait_id: trait_info.trait_id,
@@ -1483,7 +1677,11 @@ fn build_trait_impl_registry(
                     associated_type_bindings: trait_impl_associated_type_bindings(
                         impl_item, rustdoc,
                     ),
+                    associated_const_bindings: trait_impl_associated_const_bindings(
+                        impl_item, rustdoc,
+                    ),
                     where_clauses: where_clause_strings(impl_value.get("generics")),
+                    cfg_attrs: cfg_attrs_from_attrs(&impl_item.attrs),
                     is_unsafe: impl_value
                         .get("is_unsafe")
                         .and_then(Value::as_bool)
@@ -1889,6 +2087,117 @@ fn is_rust_doc_fence(info: &str) -> bool {
     })
 }
 
+fn doc_sections_from_docs(docs: &str) -> DocSections {
+    DocSections {
+        summary: markdown_summary(docs),
+        panics: markdown_heading_body(docs, "Panics"),
+        errors: markdown_heading_body(docs, "Errors"),
+        safety: markdown_heading_body(docs, "Safety"),
+        // Real crates mix `# Example` and `# Examples`, so treat both as the
+        // same raw-doc section in Phase 1.
+        examples: markdown_heading_body_any(docs, &["Examples", "Example"]),
+    }
+}
+
+fn markdown_summary(docs: &str) -> String {
+    let mut paragraph = Vec::new();
+    let mut in_fence = false;
+
+    for line in docs.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        if trimmed.is_empty() {
+            if let Some(summary) = markdown_summary_paragraph(&paragraph) {
+                return summary;
+            }
+            paragraph.clear();
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            if let Some(summary) = markdown_summary_paragraph(&paragraph) {
+                return summary;
+            }
+            paragraph.clear();
+            continue;
+        }
+
+        paragraph.push(trimmed.to_owned());
+    }
+
+    markdown_summary_paragraph(&paragraph).unwrap_or_default()
+}
+
+fn markdown_heading_body(docs: &str, heading: &str) -> String {
+    markdown_heading_body_any(docs, &[heading])
+}
+
+fn markdown_heading_body_any(docs: &str, headings: &[&str]) -> String {
+    let mut lines = Vec::new();
+    let mut in_section = false;
+    let mut in_fence = false;
+
+    for line in docs.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            if in_section {
+                lines.push(line.to_owned());
+            }
+            continue;
+        }
+        if !in_fence {
+            if let Some(current_heading) = markdown_heading_text(trimmed) {
+                if headings.iter().any(|heading| current_heading == *heading) {
+                    in_section = true;
+                    lines.clear();
+                    continue;
+                }
+                if in_section {
+                    break;
+                }
+            }
+        }
+
+        if in_section {
+            lines.push(line.to_owned());
+        }
+    }
+
+    lines.join("\n").trim().to_owned()
+}
+
+fn markdown_summary_paragraph(lines: &[String]) -> Option<String> {
+    if lines.is_empty() || markdown_paragraph_is_decorative(lines) {
+        return None;
+    }
+    Some(lines.join("\n"))
+}
+
+fn markdown_paragraph_is_decorative(lines: &[String]) -> bool {
+    lines.iter().all(|line| markdown_line_is_decorative(line))
+}
+
+fn markdown_line_is_decorative(line: &str) -> bool {
+    let trimmed = line.trim();
+    // Skip badge/link-definition paragraphs so summary lands on the first real
+    // prose paragraph instead of docs.rs/GitHub chrome.
+    trimmed.starts_with("[![")
+        || trimmed.starts_with("<br")
+        || (trimmed.starts_with('[') && trimmed.contains("]:"))
+}
+
+fn markdown_heading_text(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    let heading = trimmed.strip_prefix('#')?;
+    Some(heading.trim_start_matches('#').trim())
+}
+
 fn example_id_for_code_ref(code_ref: &CodeRef, block_index: usize) -> ExampleId {
     ExampleId::from(format!(
         "ex::{}::{}::{}",
@@ -1951,18 +2260,22 @@ fn build_risk_facts(
     type_contexts: &BTreeMap<String, TypeContext>,
     api_item_ids: &BTreeMap<String, ApiId>,
     trait_impl_registry: &[TraitImplInfo],
+    apis: &[ApiInfo],
 ) -> RiskFacts {
+    let extern_abi_apis = build_extern_abi_api_facts(rustdoc, api_item_ids);
     RiskFacts {
-        ffi_apis: build_ffi_api_facts(rustdoc, api_item_ids),
+        extern_abi_apis,
         repr_types: build_repr_type_facts(rustdoc, type_contexts),
         drop_impl_types: build_drop_impl_type_ids(trait_impl_registry),
+        explicit_panic_sites: Vec::new(),
+        borrowed_return_apis: build_borrowed_return_facts(rustdoc, api_item_ids, apis),
     }
 }
 
-fn build_ffi_api_facts(
+fn build_extern_abi_api_facts(
     rustdoc: &RustdocResponse,
     api_item_ids: &BTreeMap<String, ApiId>,
-) -> Vec<FfiApiFact> {
+) -> Vec<ExternAbiApiFact> {
     let mut facts = api_item_ids
         .iter()
         .filter_map(|(item_id, api_id)| {
@@ -1973,7 +2286,7 @@ fn build_ffi_api_facts(
                 return None;
             }
 
-            Some(FfiApiFact {
+            Some(ExternAbiApiFact {
                 api_id: api_id.clone(),
                 abi: abi.to_owned(),
                 source: api_item
@@ -2044,6 +2357,167 @@ fn build_drop_impl_type_ids(trait_impl_registry: &[TraitImplInfo]) -> Vec<TypeId
         .collect()
 }
 
+fn build_borrowed_return_facts(
+    rustdoc: &RustdocResponse,
+    api_item_ids: &BTreeMap<String, ApiId>,
+    apis: &[ApiInfo],
+) -> Vec<BorrowedReturnFact> {
+    let api_by_id = apis
+        .iter()
+        .map(|api| (api.api_id.as_str().to_owned(), api))
+        .collect::<BTreeMap<_, _>>();
+    let mut facts = Vec::new();
+
+    for (item_id, api_id) in api_item_ids {
+        let Some(api_item) = rustdoc.index.get(item_id) else {
+            continue;
+        };
+        let Some(function_value) = function_value(api_item) else {
+            continue;
+        };
+        let Some(api) = api_by_id.get(api_id.as_str()) else {
+            continue;
+        };
+        if let Some(fact) = borrowed_return_fact_from_function(api, function_value) {
+            facts.push(fact);
+        }
+    }
+
+    facts.sort_by(|left, right| left.api_id.cmp(&right.api_id));
+    facts
+}
+
+fn borrowed_return_fact_from_function(
+    api: &ApiInfo,
+    function_value: &Value,
+) -> Option<BorrowedReturnFact> {
+    let inputs = function_value
+        .get("sig")
+        .and_then(|sig| sig.get("inputs"))
+        .and_then(Value::as_array)?;
+    let output = function_value
+        .get("sig")
+        .and_then(|sig| sig.get("output"))
+        .filter(|output| !output.is_null())?;
+
+    let mut output_lifetimes = Vec::new();
+    let mut output_has_elided_borrow = false;
+    collect_borrow_lifetimes(output, &mut output_lifetimes, &mut output_has_elided_borrow);
+    if output_lifetimes.is_empty() && !output_has_elided_borrow {
+        return None;
+    }
+
+    let mut receiver_lifetimes = BTreeSet::new();
+    let mut receiver_is_borrowed = false;
+    let mut arg_lifetime_positions = BTreeMap::<String, BTreeSet<u32>>::new();
+    let mut borrowed_arg_positions = BTreeSet::<u32>::new();
+
+    let mut arg_position = 0_u32;
+    for input in inputs {
+        let Some(input) = input.as_array() else {
+            continue;
+        };
+        let Some(name) = input.first().and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(ty) = input.get(1) else {
+            continue;
+        };
+
+        let mut input_lifetimes = Vec::new();
+        let mut input_has_elided_borrow = false;
+        collect_borrow_lifetimes(ty, &mut input_lifetimes, &mut input_has_elided_borrow);
+
+        if name == "self" {
+            receiver_is_borrowed = !input_lifetimes.is_empty() || input_has_elided_borrow;
+            receiver_lifetimes.extend(input_lifetimes.into_iter());
+            continue;
+        }
+
+        if !input_lifetimes.is_empty() || input_has_elided_borrow {
+            borrowed_arg_positions.insert(arg_position);
+        }
+        for lifetime in input_lifetimes {
+            arg_lifetime_positions
+                .entry(lifetime)
+                .or_default()
+                .insert(arg_position);
+        }
+        arg_position += 1;
+    }
+
+    let mut matched_lifetimes = BTreeSet::new();
+    let mut from_arg_positions = BTreeSet::new();
+    let mut from_self = false;
+
+    for lifetime in &output_lifetimes {
+        if receiver_lifetimes.contains(lifetime) {
+            from_self = true;
+            matched_lifetimes.insert(lifetime.clone());
+        }
+        if let Some(positions) = arg_lifetime_positions.get(lifetime) {
+            matched_lifetimes.insert(lifetime.clone());
+            from_arg_positions.extend(positions.iter().copied());
+        }
+    }
+
+    if output_has_elided_borrow {
+        if receiver_is_borrowed {
+            from_self = true;
+        } else if borrowed_arg_positions.len() == 1 {
+            from_arg_positions.extend(borrowed_arg_positions.iter().copied());
+        }
+    }
+
+    if !from_self && from_arg_positions.is_empty() {
+        return None;
+    }
+
+    Some(BorrowedReturnFact {
+        api_id: api.api_id.clone(),
+        return_type_text: api
+            .return_type
+            .clone()
+            .unwrap_or_else(|| render_type(output)),
+        from_self,
+        from_arg_positions: from_arg_positions.into_iter().collect(),
+        lifetime_names: matched_lifetimes.into_iter().collect(),
+        source: Some(api.code_ref.clone()),
+    })
+}
+
+fn collect_borrow_lifetimes(
+    value: &Value,
+    explicit_lifetimes: &mut Vec<String>,
+    has_elided_borrow: &mut bool,
+) {
+    match value {
+        Value::Object(object) => {
+            if let Some(borrowed_ref) = object.get("borrowed_ref").and_then(Value::as_object) {
+                if let Some(lifetime) = borrowed_ref.get("lifetime").and_then(Value::as_str) {
+                    explicit_lifetimes.push(lifetime.to_owned());
+                } else {
+                    *has_elided_borrow = true;
+                }
+                if let Some(inner) = borrowed_ref.get("type") {
+                    collect_borrow_lifetimes(inner, explicit_lifetimes, has_elided_borrow);
+                }
+                return;
+            }
+
+            for nested in object.values() {
+                collect_borrow_lifetimes(nested, explicit_lifetimes, has_elided_borrow);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_borrow_lifetimes(item, explicit_lifetimes, has_elided_borrow);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn repr_kinds_from_attrs(attrs: &[String]) -> Vec<ReprKind> {
     let mut kinds = Vec::new();
     for attr in attrs {
@@ -2110,8 +2584,8 @@ fn rewrite_knowledge_paths(knowledge: &mut Knowledge, manifest_execution: &Manif
     for example in &mut knowledge.examples {
         rewrite_code_ref_path(&mut example.code_ref, manifest_execution);
     }
-    for ffi_api in &mut knowledge.risk_facts.ffi_apis {
-        if let Some(source) = &mut ffi_api.source {
+    for extern_abi_api in &mut knowledge.risk_facts.extern_abi_apis {
+        if let Some(source) = &mut extern_abi_api.source {
             rewrite_code_ref_path(source, manifest_execution);
         }
     }
@@ -2144,6 +2618,38 @@ fn backfill_api_unsafe_block_presence(knowledge: &mut Knowledge, crate_dir: &Pat
     }
 }
 
+fn backfill_explicit_panic_sites(knowledge: &mut Knowledge, crate_dir: &Path) {
+    let mut source_cache = BTreeMap::<String, Option<String>>::new();
+    let mut panic_sites = Vec::new();
+
+    for api in &knowledge.apis {
+        for panic_kind in source_span_panic_kinds(&api.code_ref, crate_dir, &mut source_cache) {
+            panic_sites.push(ExplicitPanicSiteFact {
+                owner: RiskOwner::Api(api.api_id.clone()),
+                panic_kind,
+                source: api.code_ref.clone(),
+            });
+        }
+    }
+
+    for trait_impl in &knowledge.trait_impl_registry {
+        for panic_kind in source_span_panic_kinds(&trait_impl.source, crate_dir, &mut source_cache)
+        {
+            panic_sites.push(ExplicitPanicSiteFact {
+                owner: RiskOwner::TraitImpl(trait_impl.trait_impl_id.clone()),
+                panic_kind,
+                source: trait_impl.source.clone(),
+            });
+        }
+    }
+
+    panic_sites.sort_by(|left, right| {
+        format!("{:?}:{}", left.owner, left.panic_kind)
+            .cmp(&format!("{:?}:{}", right.owner, right.panic_kind))
+    });
+    knowledge.risk_facts.explicit_panic_sites = panic_sites;
+}
+
 fn source_span_contains_unsafe_impl(
     source: &CodeRef,
     crate_dir: &Path,
@@ -2174,6 +2680,36 @@ fn source_span_contains_unsafe_block(
         .collect::<Vec<_>>()
         .join(" ")
         .contains("unsafe {")
+}
+
+fn source_span_panic_kinds(
+    source: &CodeRef,
+    crate_dir: &Path,
+    source_cache: &mut BTreeMap<String, Option<String>>,
+) -> Vec<String> {
+    let Some(snippet) = source_span_text(source, crate_dir, source_cache) else {
+        return Vec::new();
+    };
+
+    let mut kinds = BTreeSet::new();
+    for panic_kind in [
+        "debug_assert_eq!",
+        "debug_assert_ne!",
+        "debug_assert!",
+        "assert_eq!",
+        "assert_ne!",
+        "assert!",
+        "panic!",
+        "todo!",
+        "unimplemented!",
+        "unreachable!",
+    ] {
+        if snippet.contains(panic_kind) {
+            kinds.insert(panic_kind.to_owned());
+        }
+    }
+
+    kinds.into_iter().collect()
 }
 
 fn source_span_text(
@@ -2266,6 +2802,208 @@ fn assoc_type_value(item: &RustdocItem) -> Option<&Value> {
 
 fn use_value(item: &RustdocItem) -> Option<&Value> {
     item.inner.get("use")
+}
+
+fn struct_field_value(item: &RustdocItem) -> Option<&Value> {
+    item.inner.get("struct_field")
+}
+
+fn assoc_const_value(item: &RustdocItem) -> Option<&Value> {
+    item.inner.get("assoc_const")
+}
+
+fn cfg_attrs_from_attrs(attrs: &[String]) -> Vec<String> {
+    let mut cfg_attrs = Vec::new();
+    for attr in attrs {
+        if attr.contains("cfg(") || attr.contains("cfg_attr(") {
+            if !cfg_attrs.contains(attr) {
+                cfg_attrs.push(attr.clone());
+            }
+        }
+    }
+    cfg_attrs
+}
+
+fn has_attr(attrs: &[String], attr_name: &str) -> bool {
+    attrs.iter().any(|attr| {
+        let trimmed = attr.trim();
+        trimmed == attr_name
+            || trimmed == format!("#[{attr_name}]")
+            || trimmed.starts_with(&format!("#[{attr_name}("))
+    })
+}
+
+fn type_surface_from_item(
+    item: &RustdocItem,
+    rustdoc: &RustdocResponse,
+) -> (Vec<TypeFieldInfo>, Vec<EnumVariantInfo>, bool, bool) {
+    if let Some(struct_value) = item.inner.get("struct").and_then(Value::as_object) {
+        let (fields, has_hidden_fields) =
+            struct_like_fields_from_kind(struct_value.get("kind"), rustdoc);
+        return (fields, Vec::new(), has_hidden_fields, false);
+    }
+    if let Some(union_value) = item.inner.get("union").and_then(Value::as_object) {
+        let fields = union_value
+            .get("fields")
+            .and_then(Value::as_array)
+            .map(|fields| fields_from_ids(fields, rustdoc))
+            .unwrap_or_default();
+        return (fields, Vec::new(), false, false);
+    }
+    if let Some(enum_value) = item.inner.get("enum").and_then(Value::as_object) {
+        let variants = enum_value
+            .get("variants")
+            .and_then(Value::as_array)
+            .map(|variants| {
+                variants
+                    .iter()
+                    .filter_map(value_id_to_string)
+                    .filter_map(|variant_id| {
+                        let variant_item = rustdoc.index.get(&variant_id)?;
+                        enum_variant_info_from_item(variant_item, rustdoc)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let has_hidden_variants = enum_value
+            .get("has_stripped_variants")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        return (Vec::new(), variants, false, has_hidden_variants);
+    }
+
+    (Vec::new(), Vec::new(), false, false)
+}
+
+fn struct_like_fields_from_kind(
+    kind_value: Option<&Value>,
+    rustdoc: &RustdocResponse,
+) -> (Vec<TypeFieldInfo>, bool) {
+    let Some(kind) = kind_value.and_then(Value::as_object) else {
+        return (Vec::new(), false);
+    };
+
+    if let Some(plain) = kind.get("plain").and_then(Value::as_object) {
+        let fields = plain
+            .get("fields")
+            .and_then(Value::as_array)
+            .map(|fields| fields_from_ids(fields, rustdoc))
+            .unwrap_or_default();
+        let has_hidden = plain
+            .get("has_stripped_fields")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        return (fields, has_hidden);
+    }
+
+    if let Some(tuple) = kind.get("tuple").and_then(Value::as_array) {
+        return (fields_from_ids(tuple, rustdoc), false);
+    }
+
+    (Vec::new(), false)
+}
+
+fn fields_from_ids(field_ids: &[Value], rustdoc: &RustdocResponse) -> Vec<TypeFieldInfo> {
+    field_ids
+        .iter()
+        .enumerate()
+        .filter_map(|(position, field_id_value)| {
+            let field_id = value_id_to_string(field_id_value)?;
+            let field_item = rustdoc.index.get(&field_id)?;
+            type_field_info_from_item(field_item, position as u32)
+        })
+        .collect()
+}
+
+fn type_field_info_from_item(item: &RustdocItem, position: u32) -> Option<TypeFieldInfo> {
+    let field_type = struct_field_value(item)?;
+    let name = item.name.as_deref().and_then(|name| {
+        if name.chars().all(|ch| ch.is_ascii_digit()) {
+            None
+        } else {
+            Some(name.to_owned())
+        }
+    });
+
+    Some(TypeFieldInfo {
+        position,
+        name,
+        type_text: render_type(field_type),
+        visibility_text: item.visibility.clone(),
+        source: item
+            .span
+            .as_ref()
+            .map(|span| code_ref_from_span(Some(span))),
+    })
+}
+
+fn enum_variant_info_from_item(
+    item: &RustdocItem,
+    rustdoc: &RustdocResponse,
+) -> Option<EnumVariantInfo> {
+    let variant = item.inner.get("variant")?.as_object()?;
+    let (kind, fields) = enum_variant_kind_and_fields(variant.get("kind"), rustdoc);
+
+    Some(EnumVariantInfo {
+        name: item.name.clone()?,
+        kind,
+        is_non_exhaustive: has_attr(&item.attrs, "non_exhaustive"),
+        discriminant_text: variant_discriminant_text(variant.get("discriminant")),
+        fields,
+        source: item
+            .span
+            .as_ref()
+            .map(|span| code_ref_from_span(Some(span))),
+    })
+}
+
+fn enum_variant_kind_and_fields(
+    kind_value: Option<&Value>,
+    rustdoc: &RustdocResponse,
+) -> (VariantKind, Vec<TypeFieldInfo>) {
+    let Some(kind_value) = kind_value else {
+        return (VariantKind::Unit, Vec::new());
+    };
+
+    if let Some(kind_text) = kind_value.as_str() {
+        if kind_text == "plain" {
+            return (VariantKind::Unit, Vec::new());
+        }
+    }
+
+    let Some(kind) = kind_value.as_object() else {
+        return (VariantKind::Unit, Vec::new());
+    };
+
+    if let Some(tuple) = kind.get("tuple").and_then(Value::as_array) {
+        return (VariantKind::Tuple, fields_from_ids(tuple, rustdoc));
+    }
+    if let Some(struct_fields) = kind.get("struct").and_then(Value::as_object) {
+        let fields = struct_fields
+            .get("fields")
+            .and_then(Value::as_array)
+            .map(|fields| fields_from_ids(fields, rustdoc))
+            .unwrap_or_default();
+        return (VariantKind::Struct, fields);
+    }
+
+    (VariantKind::Unit, Vec::new())
+}
+
+fn variant_discriminant_text(discriminant_value: Option<&Value>) -> Option<String> {
+    let discriminant = discriminant_value?.as_object()?;
+    discriminant
+        .get("value")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            discriminant
+                .get("expr")
+                .and_then(Value::as_str)
+                .filter(|expr| !expr.is_empty())
+                .map(ToOwned::to_owned)
+        })
 }
 
 fn is_public(item: &RustdocItem) -> bool {
@@ -2402,6 +3140,11 @@ fn merge_trait_info(existing: &mut TraitInfo, incoming: TraitInfo) {
     if existing.docs.is_empty() && !incoming.docs.is_empty() {
         existing.docs = incoming.docs;
     }
+    if existing.doc_sections == DocSections::default()
+        && incoming.doc_sections != DocSections::default()
+    {
+        existing.doc_sections = incoming.doc_sections;
+    }
     if origin_rank(incoming.origin.clone()) > origin_rank(existing.origin.clone()) {
         existing.origin = incoming.origin;
     }
@@ -2415,6 +3158,10 @@ fn merge_trait_info(existing: &mut TraitInfo, incoming: TraitInfo) {
     merge_associated_type_defs(
         &mut existing.associated_type_defs,
         incoming.associated_type_defs,
+    );
+    merge_associated_const_defs(
+        &mut existing.associated_const_defs,
+        incoming.associated_const_defs,
     );
     // Reverse edges can be discovered from multiple surfaces; merge them just
     // like supertrait ids instead of letting later passes overwrite earlier ones.
@@ -2461,61 +3208,29 @@ fn merge_associated_type_defs(
     *existing = merged.into_values().collect();
 }
 
+fn merge_associated_const_defs(
+    existing: &mut Vec<TraitAssociatedConstDef>,
+    incoming: Vec<TraitAssociatedConstDef>,
+) {
+    let mut merged = existing
+        .iter()
+        .cloned()
+        .map(|assoc_const| (assoc_const.name.clone(), assoc_const))
+        .collect::<BTreeMap<_, _>>();
+
+    for assoc_const in incoming {
+        merged
+            .entry(assoc_const.name.clone())
+            .or_insert(assoc_const);
+    }
+
+    *existing = merged.into_values().collect();
+}
+
 fn trait_impl_id_for_surface(trait_ref_text: &str, for_type_text: &str) -> TraitImplId {
     TraitImplId::from(format!(
         "trait_impl::{trait_ref_text}::for::{for_type_text}"
     ))
-}
-
-fn classify_trait_impl_surface_bucket(type_context: &TypeContext) -> TraitImplSurfaceBucket {
-    let type_name = type_context
-        .canonical_path
-        .rsplit("::")
-        .next()
-        .unwrap_or_default();
-
-    // Keep the bucket logic intentionally coarse and name-based for Phase 1.
-    // We want a stable consumption hint without introducing another normalized
-    // graph or requiring crate-specific modeling.
-    if matches!(type_name, "HashMap" | "HashSet" | "HashTable") {
-        return TraitImplSurfaceBucket::PrimaryContainer;
-    }
-    if type_context.canonical_path.contains("::raw_entry::") || type_name.contains("Entry") {
-        return TraitImplSurfaceBucket::EntryOrRawEntry;
-    }
-    if type_context.canonical_path.contains("::hasher::") || type_name.ends_with("Error") {
-        return TraitImplSurfaceBucket::ErrorOrHasher;
-    }
-    if is_iterator_or_view_type_name(type_name) {
-        return TraitImplSurfaceBucket::IteratorOrView;
-    }
-
-    TraitImplSurfaceBucket::Other
-}
-
-fn is_iterator_or_view_type_name(type_name: &str) -> bool {
-    matches!(
-        type_name,
-        "Iter"
-            | "IterMut"
-            | "IntoIter"
-            | "Keys"
-            | "Values"
-            | "ValuesMut"
-            | "IntoKeys"
-            | "IntoValues"
-            | "Drain"
-            | "ExtractIf"
-            | "Difference"
-            | "Intersection"
-            | "SymmetricDifference"
-            | "Union"
-            | "IterBuckets"
-            | "IterHash"
-            | "IterHashBuckets"
-            | "IterHashMut"
-            | "UnsafeIter"
-    )
 }
 
 fn is_public_trait_impl_surface(trait_ref: &TraitRefInfo, rustdoc: &RustdocResponse) -> bool {
@@ -2692,6 +3407,10 @@ fn trait_info_from_ref(
             .and_then(|item| item.span.as_ref())
             .map(|span| code_ref_from_span(Some(span))),
         docs: item.and_then(|item| item.docs.clone()).unwrap_or_default(),
+        doc_sections: doc_sections_from_docs(
+            item.and_then(|trait_item| trait_item.docs.as_deref())
+                .unwrap_or_default(),
+        ),
         origin,
         exposure_kinds: vec![exposure_kind],
         is_unsafe: item
@@ -2710,6 +3429,9 @@ fn trait_info_from_ref(
             .unwrap_or_default(),
         associated_type_defs: item
             .map(|item| trait_associated_type_defs(item, rustdoc))
+            .unwrap_or_default(),
+        associated_const_defs: item
+            .map(|item| trait_associated_const_defs(item, rustdoc))
             .unwrap_or_default(),
         used_by_api_ids: Vec::new(),
         used_by_trait_ids: Vec::new(),
@@ -3034,7 +3756,159 @@ fn return_type_string(function_value: &Value) -> Option<String> {
     function_value
         .get("sig")
         .and_then(|sig| sig.get("output"))
+        .filter(|output| !output.is_null())
         .map(render_type)
+}
+
+fn return_shape_from_function(function_value: &Value) -> Option<ReturnShape> {
+    let output = function_value
+        .get("sig")
+        .and_then(|sig| sig.get("output"))?;
+    Some(return_shape_from_type(output))
+}
+
+fn return_shape_from_type(value: &Value) -> ReturnShape {
+    if value.is_null() {
+        return ReturnShape {
+            kind: ReturnShapeKind::Unit,
+            inner_types: Vec::new(),
+        };
+    }
+
+    let Some(object) = value.as_object() else {
+        return ReturnShape {
+            kind: ReturnShapeKind::Other,
+            inner_types: Vec::new(),
+        };
+    };
+
+    if let Some(primitive) = object.get("primitive").and_then(Value::as_str) {
+        let kind = if matches!(primitive, "never" | "!") {
+            ReturnShapeKind::Never
+        } else {
+            ReturnShapeKind::Primitive
+        };
+        return ReturnShape {
+            kind,
+            inner_types: Vec::new(),
+        };
+    }
+
+    if let Some(borrowed_ref) = object.get("borrowed_ref").and_then(Value::as_object) {
+        let kind = if borrowed_ref
+            .get("is_mutable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            ReturnShapeKind::RefMut
+        } else {
+            ReturnShapeKind::Ref
+        };
+        return ReturnShape {
+            kind,
+            inner_types: borrowed_ref
+                .get("type")
+                .map(render_type)
+                .into_iter()
+                .collect(),
+        };
+    }
+
+    if let Some(raw_pointer) = object.get("raw_pointer").and_then(Value::as_object) {
+        return ReturnShape {
+            kind: ReturnShapeKind::RawPtr,
+            inner_types: raw_pointer
+                .get("type")
+                .map(render_type)
+                .into_iter()
+                .collect(),
+        };
+    }
+
+    if let Some(tuple) = object.get("tuple").and_then(Value::as_array) {
+        return ReturnShape {
+            kind: ReturnShapeKind::Tuple,
+            inner_types: tuple.iter().map(render_type).collect(),
+        };
+    }
+
+    if let Some(array) = object.get("array").and_then(Value::as_object) {
+        return ReturnShape {
+            kind: ReturnShapeKind::Array,
+            inner_types: array.get("type").map(render_type).into_iter().collect(),
+        };
+    }
+
+    if let Some(slice) = object.get("slice") {
+        return ReturnShape {
+            kind: ReturnShapeKind::Slice,
+            inner_types: vec![render_type(slice)],
+        };
+    }
+
+    if let Some(dyn_trait) = object.get("dyn_trait").and_then(Value::as_object) {
+        return ReturnShape {
+            kind: ReturnShapeKind::DynTrait,
+            inner_types: dyn_trait_bounds_texts(dyn_trait),
+        };
+    }
+
+    if let Some(impl_trait) = object.get("impl_trait").and_then(Value::as_array) {
+        return ReturnShape {
+            kind: ReturnShapeKind::ImplTrait,
+            inner_types: impl_trait.iter().map(render_generic_bound).collect(),
+        };
+    }
+
+    if let Some(resolved_path) = object.get("resolved_path").and_then(Value::as_object) {
+        let path = resolved_path
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let kind = match path {
+            "Result" | "core::result::Result" | "std::result::Result" => ReturnShapeKind::Result,
+            "Option" | "core::option::Option" | "std::option::Option" => ReturnShapeKind::Option,
+            _ => ReturnShapeKind::Nominal,
+        };
+        return ReturnShape {
+            kind,
+            inner_types: top_level_type_args(resolved_path.get("args")),
+        };
+    }
+
+    if object.get("qualified_path").is_some() {
+        return ReturnShape {
+            kind: ReturnShapeKind::Nominal,
+            inner_types: Vec::new(),
+        };
+    }
+
+    ReturnShape {
+        kind: ReturnShapeKind::Other,
+        inner_types: Vec::new(),
+    }
+}
+
+fn top_level_type_args(args_value: Option<&Value>) -> Vec<String> {
+    args_value
+        .and_then(|args| args.get("angle_bracketed"))
+        .and_then(|angle| angle.get("args"))
+        .and_then(Value::as_array)
+        .map(|args| {
+            args.iter()
+                .filter_map(|arg| arg.get("type"))
+                .map(render_type)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn dyn_trait_bounds_texts(dyn_trait: &Map<String, Value>) -> Vec<String> {
+    dyn_trait
+        .get("traits")
+        .and_then(Value::as_array)
+        .map(|traits| traits.iter().filter_map(render_dyn_trait_entry).collect())
+        .unwrap_or_default()
 }
 
 fn function_header_flag(function_value: &Value, field: &str) -> bool {
@@ -3069,6 +3943,19 @@ fn render_type(value: &Value) -> String {
         Value::Object(object) => {
             if let Some(primitive) = object.get("primitive").and_then(Value::as_str) {
                 return primitive.to_owned();
+            }
+            if let Some(impl_trait) = object.get("impl_trait").and_then(Value::as_array) {
+                let bounds = impl_trait
+                    .iter()
+                    .map(render_generic_bound)
+                    .filter(|bound| !bound.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" + ");
+                return if bounds.is_empty() {
+                    "impl _".to_owned()
+                } else {
+                    format!("impl {bounds}")
+                };
             }
             if let Some(generic) = object.get("generic").and_then(Value::as_str) {
                 return generic.to_owned();
@@ -3414,6 +4301,43 @@ fn trait_associated_type_defs(
         .unwrap_or_default()
 }
 
+fn trait_associated_const_defs(
+    item: &RustdocItem,
+    rustdoc: &RustdocResponse,
+) -> Vec<TraitAssociatedConstDef> {
+    item.inner
+        .get("trait")
+        .and_then(|trait_value| trait_value.get("items"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(value_id_to_string)
+                .filter_map(|item_id| {
+                    let trait_item = rustdoc.index.get(&item_id)?;
+                    trait_associated_const_def_from_item(trait_item)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn trait_associated_const_def_from_item(item: &RustdocItem) -> Option<TraitAssociatedConstDef> {
+    let assoc_const = assoc_const_value(item)?;
+    Some(TraitAssociatedConstDef {
+        name: item.name.clone()?,
+        type_text: assoc_const
+            .get("type")
+            .map(render_type)
+            .unwrap_or_else(|| "_".to_owned()),
+        default_value_text: assoc_const_value_text(assoc_const),
+        source: item
+            .span
+            .as_ref()
+            .map(|span| code_ref_from_span(Some(span))),
+    })
+}
+
 fn trait_associated_type_def_from_item(item: &RustdocItem) -> Option<TraitAssociatedTypeDef> {
     let assoc_type = assoc_type_value(item)?;
     Some(TraitAssociatedTypeDef {
@@ -3450,6 +4374,54 @@ fn trait_impl_associated_type_bindings(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+fn trait_impl_associated_const_bindings(
+    impl_item: &RustdocItem,
+    rustdoc: &RustdocResponse,
+) -> Vec<TraitAssociatedConstBinding> {
+    impl_value(impl_item)
+        .and_then(|impl_value| impl_value.get("items"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(value_id_to_string)
+                .filter_map(|item_id| {
+                    let impl_member_item = rustdoc.index.get(&item_id)?;
+                    trait_associated_const_binding_from_item(impl_member_item)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn trait_associated_const_binding_from_item(
+    item: &RustdocItem,
+) -> Option<TraitAssociatedConstBinding> {
+    let assoc_const = assoc_const_value(item)?;
+    Some(TraitAssociatedConstBinding {
+        name: item.name.clone()?,
+        value_text: assoc_const_value_text(assoc_const),
+        source: item
+            .span
+            .as_ref()
+            .map(|span| code_ref_from_span(Some(span))),
+    })
+}
+
+fn assoc_const_value_text(assoc_const: &Value) -> Option<String> {
+    let value = assoc_const.get("value")?;
+    if value.is_null() {
+        return None;
+    }
+    if let Some(text) = value.as_str() {
+        if text == "_" {
+            return None;
+        }
+        return Some(text.to_owned());
+    }
+    serde_json::to_string(value).ok()
 }
 
 fn trait_associated_type_binding_from_item(
@@ -3508,6 +4480,11 @@ struct TypeRow {
     kind: TypeKind,
     generic_params: Vec<String>,
     where_clauses: Vec<String>,
+    is_non_exhaustive: bool,
+    fields: Vec<TypeFieldInfo>,
+    variants: Vec<EnumVariantInfo>,
+    has_hidden_fields: bool,
+    has_hidden_variants: bool,
 }
 
 #[cfg(test)]

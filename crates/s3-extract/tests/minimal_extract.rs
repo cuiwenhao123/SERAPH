@@ -1,4 +1,7 @@
-use seraph_types::{ApiId, ApiKind, ExampleAnchor, Knowledge, ReprKind, TraitOrigin, TypeId};
+use seraph_types::{
+    ApiId, ApiKind, ExampleAnchor, Knowledge, ReprKind, ReturnShapeKind, RiskOwner, SymbolKind,
+    TraitOrigin, TypeId, VariantKind,
+};
 use std::collections::BTreeSet;
 
 fn hashbrown_manifest_path() -> &'static str {
@@ -25,6 +28,10 @@ fn audit_fixture_manifest_path() -> String {
         .join("examples/target-crates/s3-audit-fixture/Cargo.toml")
         .to_string_lossy()
         .into_owned()
+}
+
+fn sqlx_core_manifest_path() -> &'static str {
+    "/tmp/seraph-real-crates/sqlx/sqlx-core/Cargo.toml"
 }
 
 #[test]
@@ -185,10 +192,6 @@ fn extract_knowledge_from_manifest_reads_cargo_metadata_and_rustdoc() {
         "type::hashbrown::set::HashSet"
     );
     assert_eq!(
-        serde_json::to_string(&hash_set_bitand_impl.surface_bucket).unwrap(),
-        "\"primary_container\""
-    );
-    assert_eq!(
         hash_set_bitand_impl.trait_ref_text,
         "core::ops::bit::BitAnd<&HashSet<T, S, A>>"
     );
@@ -225,10 +228,6 @@ fn extract_knowledge_from_manifest_reads_cargo_metadata_and_rustdoc() {
         hash_map_default_impl.target_type_id.as_str(),
         "type::hashbrown::map::HashMap"
     );
-    assert_eq!(
-        serde_json::to_string(&hash_map_default_impl.surface_bucket).unwrap(),
-        "\"primary_container\""
-    );
     assert!(hash_map_default_impl
         .where_clauses
         .contains(&"S: Default".to_owned()));
@@ -243,8 +242,8 @@ fn extract_knowledge_from_manifest_reads_cargo_metadata_and_rustdoc() {
         })
         .expect("Debug impl for OccupiedEntry should be extracted into trait_impl_registry");
     assert_eq!(
-        serde_json::to_string(&occupied_entry_debug_impl.surface_bucket).unwrap(),
-        "\"entry_or_raw_entry\""
+        occupied_entry_debug_impl.target_type_id.as_str(),
+        "type::hashbrown::map::OccupiedEntry"
     );
 
     let iter_iterator_impl = knowledge
@@ -255,10 +254,6 @@ fn extract_knowledge_from_manifest_reads_cargo_metadata_and_rustdoc() {
                 && trait_impl.for_type_text == "Iter<'a, K>"
         })
         .expect("Iterator impl for set::Iter should be extracted into trait_impl_registry");
-    assert_eq!(
-        serde_json::to_string(&iter_iterator_impl.surface_bucket).unwrap(),
-        "\"iterator_or_view\""
-    );
     assert_eq!(iter_iterator_impl.associated_type_bindings.len(), 1);
     assert_eq!(iter_iterator_impl.associated_type_bindings[0].name, "Item");
     assert_eq!(
@@ -300,8 +295,8 @@ fn extract_knowledge_from_manifest_reads_cargo_metadata_and_rustdoc() {
         })
         .expect("Display impl for TryReserveError should be extracted into trait_impl_registry");
     assert_eq!(
-        serde_json::to_string(&try_reserve_display_impl.surface_bucket).unwrap(),
-        "\"error_or_hasher\""
+        try_reserve_display_impl.target_type_id.as_str(),
+        "type::hashbrown::TryReserveError"
     );
 
     let contains_key_example = knowledge
@@ -428,6 +423,32 @@ fn extract_knowledge_from_nested_workspace_manifest_uses_fallback() {
 }
 
 #[test]
+fn extract_workspace_member_manifest_reads_rustdoc_from_workspace_target() {
+    let knowledge = s3_extract::extract_knowledge_from_manifest(sqlx_core_manifest_path())
+        .expect("workspace member manifest should extract successfully");
+
+    assert_eq!(knowledge.crate_meta.package_name, "sqlx-core");
+    assert_eq!(knowledge.crate_meta.lib_target_name, "sqlx_core");
+    assert_eq!(knowledge.crate_meta.crate_import_name, "sqlx_core");
+    assert_eq!(
+        knowledge.crate_meta.manifest_path,
+        sqlx_core_manifest_path()
+    );
+    assert!(knowledge
+        .crate_meta
+        .lib_rs_path
+        .ends_with("/sqlx-core/src/lib.rs"));
+    assert!(knowledge
+        .modules
+        .iter()
+        .any(|module| module.canonical_path == "sqlx_core::pool"));
+    assert!(knowledge
+        .types
+        .iter()
+        .any(|ty| ty.canonical_path == "sqlx_core::pool::Pool"));
+}
+
+#[test]
 fn extract_fixture_promotes_public_trait_methods_into_apis() {
     let knowledge = s3_extract::extract_knowledge_from_manifest(audit_fixture_manifest_path())
         .expect("fixture manifest should extract successfully");
@@ -507,13 +528,13 @@ fn extract_fixture_collects_risk_facts() {
     let knowledge = s3_extract::extract_knowledge_from_manifest(audit_fixture_manifest_path())
         .expect("fixture manifest should extract successfully");
 
-    let ffi_fact = knowledge
+    let extern_fact = knowledge
         .risk_facts
-        .ffi_apis
+        .extern_abi_apis
         .iter()
         .find(|fact| fact.api_id.as_str() == "api::s3_audit_fixture::fixture_ffi_add")
-        .expect("extern API should be recorded in ffi risk facts");
-    assert_eq!(ffi_fact.abi, "C");
+        .expect("extern ABI API should be recorded in extern_abi_apis");
+    assert_eq!(extern_fact.abi, "C");
 
     let repr_fact = knowledge
         .risk_facts
@@ -527,6 +548,10 @@ fn extract_fixture_collects_risk_facts() {
         .risk_facts
         .drop_impl_types
         .contains(&TypeId::from("type::s3_audit_fixture::ExampleDrop")));
+    assert!(knowledge
+        .risk_facts
+        .drop_impl_types
+        .contains(&TypeId::from("type::s3_audit_fixture::ExampleDropPanic")));
 }
 
 #[test]
@@ -647,4 +672,359 @@ fn extract_fixture_includes_macro_and_constant_surface() {
         .expect("fixture constant should be extracted into symbols");
     assert_eq!(sample_const["symbol_kind"], "constant");
     assert_eq!(sample_const["type_text"], "usize");
+
+    let assoc_const = symbols
+        .iter()
+        .find(|symbol| symbol["canonical_path"] == "s3_audit_fixture::ExampleType::DEFAULT_LABEL")
+        .expect("fixture associated const should be extracted into symbols");
+    assert_eq!(assoc_const["symbol_kind"], "associated_constant");
+    assert_eq!(
+        assoc_const["owner_type_id"],
+        "type::s3_audit_fixture::ExampleType"
+    );
+    assert_eq!(assoc_const["type_text"], "&'static str");
+}
+
+#[test]
+fn extract_outputs_do_not_serialize_removed_compat_fields() {
+    let knowledge = s3_extract::extract_knowledge_from_manifest(audit_fixture_manifest_path())
+        .expect("fixture manifest should extract successfully");
+    let value = serde_json::to_value(&knowledge).expect("knowledge should serialize to JSON value");
+
+    let trait_impl = value["trait_impl_registry"]
+        .as_array()
+        .and_then(|items| items.first())
+        .expect("fixture should serialize at least one trait impl");
+    assert!(
+        trait_impl.get("surface_bucket").is_none(),
+        "trait impl JSON should not retain removed semantic bucket field"
+    );
+
+    let risk_facts = value["risk_facts"]
+        .as_object()
+        .expect("risk_facts should serialize as an object");
+    assert!(
+        !risk_facts.contains_key("ffi_apis"),
+        "risk_facts JSON should not retain removed ffi_apis alias"
+    );
+    assert!(
+        risk_facts.contains_key("extern_abi_apis"),
+        "risk_facts JSON should keep extern_abi_apis as the single ABI fact field"
+    );
+}
+
+#[test]
+fn extract_fixture_populates_doc_sections_and_return_shapes() {
+    let knowledge = s3_extract::extract_knowledge_from_manifest(audit_fixture_manifest_path())
+        .expect("fixture manifest should extract successfully");
+
+    assert_eq!(
+        knowledge.crate_meta.root_doc_sections.summary,
+        "Fixture crate used by `s3-extract` end-to-end tests."
+    );
+
+    let example_type = knowledge
+        .types
+        .iter()
+        .find(|ty| ty.canonical_path == "s3_audit_fixture::ExampleType")
+        .expect("ExampleType should be extracted");
+    assert_eq!(
+        example_type.doc_sections.summary,
+        "Simple public type for fixture docs."
+    );
+    assert!(example_type
+        .doc_sections
+        .examples
+        .contains("ExampleType::new"));
+
+    let wrapped = knowledge
+        .apis
+        .iter()
+        .find(|api| api.canonical_path == "s3_audit_fixture::ExampleType::wrapped")
+        .expect("wrapped constructor should be extracted");
+    assert!(wrapped
+        .doc_sections
+        .errors
+        .contains("Returns a fixture error when construction fails."));
+    let wrapped_shape = wrapped
+        .return_shape
+        .as_ref()
+        .expect("wrapped constructor should have a return shape");
+    assert_eq!(wrapped_shape.kind, ReturnShapeKind::Result);
+    assert_eq!(
+        wrapped_shape.inner_types,
+        vec!["Self".to_owned(), "ExampleError".to_owned()]
+    );
+
+    let value = knowledge
+        .apis
+        .iter()
+        .find(|api| api.canonical_path == "s3_audit_fixture::ExampleType::value")
+        .expect("value method should be extracted");
+    assert_eq!(
+        value
+            .return_shape
+            .as_ref()
+            .expect("value method should have a return shape")
+            .kind,
+        ReturnShapeKind::Primitive
+    );
+
+    let panic_now = knowledge
+        .apis
+        .iter()
+        .find(|api| api.canonical_path == "s3_audit_fixture::panic_now")
+        .expect("panic_now should be extracted");
+    assert!(panic_now
+        .doc_sections
+        .panics
+        .contains("Always panics for fixture coverage."));
+
+    let assoc_const_trait = knowledge
+        .trait_registry
+        .iter()
+        .find(|trait_info| trait_info.canonical_path == "s3_audit_fixture::ExampleAssocConst")
+        .expect("ExampleAssocConst trait should be extracted");
+    assert!(assoc_const_trait
+        .doc_sections
+        .examples
+        .contains("ExampleAssocConst"));
+
+    let sample_const = knowledge
+        .symbols
+        .iter()
+        .find(|symbol| symbol.canonical_path == "s3_audit_fixture::SAMPLE_CONST")
+        .expect("SAMPLE_CONST should be extracted");
+    assert!(sample_const.doc_sections.examples.contains("SAMPLE_CONST"));
+
+    let assoc_const = knowledge
+        .symbols
+        .iter()
+        .find(|symbol| symbol.canonical_path == "s3_audit_fixture::ExampleType::DEFAULT_LABEL")
+        .expect("ExampleType::DEFAULT_LABEL should be extracted");
+    assert!(assoc_const.doc_sections.examples.contains("DEFAULT_LABEL"));
+}
+
+#[test]
+fn extract_real_semver_includes_public_inherent_associated_consts() {
+    let knowledge =
+        s3_extract::extract_knowledge_from_manifest("/tmp/seraph-real-crates/semver/Cargo.toml")
+            .expect("semver manifest should extract successfully");
+
+    let version_req_star = knowledge
+        .symbols
+        .iter()
+        .find(|symbol| symbol.canonical_path == "semver::VersionReq::STAR")
+        .expect("VersionReq::STAR should be extracted into symbols");
+    assert_eq!(version_req_star.symbol_kind, SymbolKind::AssociatedConstant);
+    assert_eq!(
+        version_req_star
+            .owner_type_id
+            .as_ref()
+            .map(|id| id.as_str()),
+        Some("type::semver::VersionReq")
+    );
+    assert_eq!(version_req_star.type_text.as_deref(), Some("Self"));
+    assert!(version_req_star.docs.contains("VersionReq"));
+
+    let build_metadata_empty = knowledge
+        .symbols
+        .iter()
+        .find(|symbol| symbol.canonical_path == "semver::BuildMetadata::EMPTY")
+        .expect("BuildMetadata::EMPTY should be extracted into symbols");
+    assert_eq!(
+        build_metadata_empty
+            .owner_type_id
+            .as_ref()
+            .map(|id| id.as_str()),
+        Some("type::semver::BuildMetadata")
+    );
+    assert_eq!(build_metadata_empty.type_text.as_deref(), Some("Self"));
+}
+
+#[test]
+fn extract_real_semver_root_doc_sections_skip_badges_and_capture_singular_example() {
+    let knowledge =
+        s3_extract::extract_knowledge_from_manifest("/tmp/seraph-real-crates/semver/Cargo.toml")
+            .expect("semver manifest should extract successfully");
+
+    assert_eq!(
+        knowledge.crate_meta.root_doc_sections.summary,
+        "A parser and evaluator for Cargo's flavor of Semantic Versioning."
+    );
+    assert!(knowledge
+        .crate_meta
+        .root_doc_sections
+        .examples
+        .contains("VersionReq::parse"));
+}
+
+#[test]
+fn extract_real_http_api_doc_sections_capture_singular_example_heading() {
+    let knowledge =
+        s3_extract::extract_knowledge_from_manifest("/tmp/seraph-real-crates/http/Cargo.toml")
+            .expect("http manifest should extract successfully");
+
+    let get_mut = knowledge
+        .apis
+        .iter()
+        .find(|api| api.canonical_path == "http::extensions::Extensions::get_mut")
+        .expect("Extensions::get_mut should be extracted");
+    assert!(get_mut
+        .doc_sections
+        .examples
+        .contains("ext.get_mut::<String>()"));
+}
+
+#[test]
+fn extract_fixture_populates_type_surface_and_assoc_const_surface() {
+    let knowledge = s3_extract::extract_knowledge_from_manifest(audit_fixture_manifest_path())
+        .expect("fixture manifest should extract successfully");
+
+    let record = knowledge
+        .types
+        .iter()
+        .find(|ty| ty.canonical_path == "s3_audit_fixture::ExampleRecord")
+        .expect("ExampleRecord should be extracted");
+    assert!(record.has_hidden_fields);
+    assert_eq!(record.fields.len(), 1);
+    assert_eq!(record.fields[0].name.as_deref(), Some("name"));
+    assert_eq!(record.fields[0].type_text, "&'static str");
+
+    let example_enum = knowledge
+        .types
+        .iter()
+        .find(|ty| ty.canonical_path == "s3_audit_fixture::ExampleEnum")
+        .expect("ExampleEnum should be extracted");
+    assert!(example_enum.is_non_exhaustive);
+    assert!(!example_enum.has_hidden_variants);
+    assert_eq!(example_enum.variants.len(), 3);
+
+    let unit_variant = example_enum
+        .variants
+        .iter()
+        .find(|variant| variant.name == "Unit")
+        .expect("unit variant should be extracted");
+    assert_eq!(unit_variant.kind, VariantKind::Unit);
+
+    let tuple_variant = example_enum
+        .variants
+        .iter()
+        .find(|variant| variant.name == "Tuple")
+        .expect("tuple variant should be extracted");
+    assert_eq!(tuple_variant.kind, VariantKind::Tuple);
+    assert_eq!(tuple_variant.fields.len(), 1);
+    assert_eq!(tuple_variant.fields[0].name, None);
+    assert_eq!(tuple_variant.fields[0].type_text, "usize");
+
+    let struct_variant = example_enum
+        .variants
+        .iter()
+        .find(|variant| variant.name == "Struct")
+        .expect("struct variant should be extracted");
+    assert_eq!(struct_variant.kind, VariantKind::Struct);
+    assert!(struct_variant.is_non_exhaustive);
+    assert_eq!(struct_variant.fields.len(), 1);
+    assert_eq!(struct_variant.fields[0].name.as_deref(), Some("label"));
+    assert_eq!(struct_variant.fields[0].type_text, "&'static str");
+
+    let assoc_const_trait = knowledge
+        .trait_registry
+        .iter()
+        .find(|trait_info| trait_info.canonical_path == "s3_audit_fixture::ExampleAssocConst")
+        .expect("ExampleAssocConst trait should be extracted");
+    assert_eq!(assoc_const_trait.associated_const_defs.len(), 2);
+    assert!(assoc_const_trait
+        .associated_const_defs
+        .iter()
+        .any(|assoc_const| {
+            assoc_const.name == "LABEL"
+                && assoc_const.type_text == "&'static str"
+                && assoc_const.default_value_text.is_none()
+        }));
+    assert!(assoc_const_trait
+        .associated_const_defs
+        .iter()
+        .any(|assoc_const| {
+            assoc_const.name == "DEFAULT_LIMIT"
+                && assoc_const.type_text == "usize"
+                && assoc_const.default_value_text.as_deref() == Some("7")
+        }));
+
+    let assoc_const_impl = knowledge
+        .trait_impl_registry
+        .iter()
+        .find(|trait_impl| {
+            trait_impl.trait_canonical_path == "s3_audit_fixture::ExampleAssocConst"
+                && trait_impl.for_type_text == "ExampleType"
+        })
+        .expect("ExampleAssocConst impl for ExampleType should be extracted");
+    assert_eq!(assoc_const_impl.associated_const_bindings.len(), 1);
+    assert_eq!(assoc_const_impl.associated_const_bindings[0].name, "LABEL");
+    assert!(assoc_const_impl.associated_const_bindings[0]
+        .value_text
+        .as_deref()
+        .is_some_and(|value| value.contains("fixture")));
+    assert!(assoc_const_impl
+        .cfg_attrs
+        .iter()
+        .any(|attr| attr.contains("cfg") && attr.contains("unix")));
+}
+
+#[test]
+fn extract_fixture_populates_borrowed_return_and_explicit_panic_facts() {
+    let knowledge = s3_extract::extract_knowledge_from_manifest(audit_fixture_manifest_path())
+        .expect("fixture manifest should extract successfully");
+
+    let holder_borrow = knowledge
+        .risk_facts
+        .borrowed_return_apis
+        .iter()
+        .find(|fact| fact.api_id.as_str() == "api::s3_audit_fixture::ExampleHolder::as_str")
+        .expect("ExampleHolder::as_str should be recorded as a borrowed return");
+    assert!(holder_borrow.from_self);
+    assert!(holder_borrow.from_arg_positions.is_empty());
+    assert!(holder_borrow.lifetime_names.is_empty());
+    assert_eq!(holder_borrow.return_type_text, "&str");
+
+    let echo_borrow = knowledge
+        .risk_facts
+        .borrowed_return_apis
+        .iter()
+        .find(|fact| fact.api_id.as_str() == "api::s3_audit_fixture::echo_str")
+        .expect("echo_str should be recorded as a borrowed return");
+    assert!(!echo_borrow.from_self);
+    assert_eq!(echo_borrow.from_arg_positions, vec![0]);
+    assert!(echo_borrow.lifetime_names.is_empty());
+    assert_eq!(echo_borrow.return_type_text, "&str");
+
+    let panic_api = knowledge
+        .risk_facts
+        .explicit_panic_sites
+        .iter()
+        .find(|fact| matches!(&fact.owner, RiskOwner::Api(api_id) if api_id.as_str() == "api::s3_audit_fixture::panic_now"))
+        .expect("panic_now should produce an explicit panic fact");
+    assert_eq!(panic_api.panic_kind, "panic!");
+
+    let drop_impl = knowledge
+        .trait_impl_registry
+        .iter()
+        .find(|trait_impl| {
+            trait_impl.trait_canonical_path == "core::ops::drop::Drop"
+                && trait_impl.target_type_id.as_str() == "type::s3_audit_fixture::ExampleDropPanic"
+        })
+        .expect("Drop impl for ExampleDropPanic should be extracted");
+    let drop_panic = knowledge
+        .risk_facts
+        .explicit_panic_sites
+        .iter()
+        .find(|fact| {
+            matches!(
+                &fact.owner,
+                RiskOwner::TraitImpl(trait_impl_id)
+                    if trait_impl_id == &drop_impl.trait_impl_id
+            )
+        })
+        .expect("panic in Drop impl should produce an explicit panic fact");
+    assert_eq!(drop_panic.panic_kind, "panic!");
 }
