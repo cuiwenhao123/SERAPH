@@ -1,0 +1,455 @@
+{
+  "crate_meta": {
+    "package_name": "demo",
+    "lib_target_name": "demo",
+    "crate_import_name": "demo",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "repository": null,
+    "manifest_path": "/tmp/demo/Cargo.toml",
+    "lib_rs_path": "/tmp/demo/src/lib.rs",
+    "default_features": [],
+    "cargo_description": "demo crate",
+    "root_docs": "Demo crate.",
+    "root_doc_sections": {
+      "summary": "Demo crate.",
+      "panics": "",
+      "errors": "",
+      "safety": "",
+      "examples": ""
+    }
+  },
+  "modules": [
+    {
+      "module_id": "mod::demo::io",
+      "name": "io",
+      "canonical_path": "demo::io",
+      "public_paths": ["demo::io"],
+      "parent_module_id": null,
+      "code_ref": {
+        "file": "src/io.rs",
+        "start_line": 1,
+        "end_line": 40
+      },
+      "docs": "Input and loading APIs.",
+      "doc_sections": {
+        "summary": "Input and loading APIs.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      }
+    },
+    {
+      "module_id": "mod::demo::query",
+      "name": "query",
+      "canonical_path": "demo::query",
+      "public_paths": ["demo::query"],
+      "parent_module_id": null,
+      "code_ref": {
+        "file": "src/query.rs",
+        "start_line": 1,
+        "end_line": 80
+      },
+      "docs": "Querying loaded documents.",
+      "doc_sections": {
+        "summary": "Querying loaded documents.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      }
+    }
+  ],
+  "types": [
+    {
+      "type_id": "type::demo::query::Document",
+      "name": "Document",
+      "canonical_path": "demo::query::Document",
+      "public_paths": ["demo::query::Document"],
+      "public_anchor_module_id": "mod::demo::query",
+      "code_ref": {
+        "file": "src/query.rs",
+        "start_line": 3,
+        "end_line": 8
+      },
+      "docs": "Loaded document.",
+      "doc_sections": {
+        "summary": "Loaded document.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "kind": "struct",
+      "generic_params": [],
+      "where_clauses": [],
+      "is_non_exhaustive": false,
+      "fields": [],
+      "variants": [],
+      "has_hidden_fields": false,
+      "has_hidden_variants": false
+    },
+    {
+      "type_id": "type::demo::query::Parser",
+      "name": "Parser",
+      "canonical_path": "demo::query::Parser",
+      "public_paths": ["demo::query::Parser"],
+      "public_anchor_module_id": "mod::demo::query",
+      "code_ref": {
+        "file": "src/query.rs",
+        "start_line": 24,
+        "end_line": 52
+      },
+      "docs": "Stateful parser with explicit close semantics.",
+      "doc_sections": {
+        "summary": "Stateful parser with explicit close semantics.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "kind": "struct",
+      "generic_params": [],
+      "where_clauses": [],
+      "is_non_exhaustive": false,
+      "fields": [],
+      "variants": [],
+      "has_hidden_fields": false,
+      "has_hidden_variants": false
+    }
+  ],
+  "apis": [
+    {
+      "api_id": "api::demo::io::from_reader",
+      "name": "from_reader",
+      "canonical_path": "demo::io::from_reader",
+      "public_paths": ["demo::io::from_reader"],
+      "public_anchor_module_id": "mod::demo::io",
+      "owner_type_id": null,
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/io.rs",
+        "start_line": 6,
+        "end_line": 18
+      },
+      "docs": "Load a document from a reader.",
+      "doc_sections": {
+        "summary": "Load a document from a reader.",
+        "panics": "",
+        "errors": "Returns an error when input is malformed.",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "free_function",
+      "signature_text": "pub fn from_reader<R>(input: R) -> Result<Document> where R: demo::io::Reader",
+      "receiver": null,
+      "generic_params": ["R"],
+      "where_clauses": ["R: demo::io::Reader"],
+      "arg_types": ["R"],
+      "return_type": "Result<demo::query::Document>",
+      "return_shape": {
+        "kind": "result",
+        "inner_types": ["demo::query::Document"]
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::demo::query::Document::pointer",
+      "name": "pointer",
+      "canonical_path": "demo::query::Document::pointer",
+      "public_paths": ["demo::query::Document::pointer"],
+      "public_anchor_module_id": "mod::demo::query",
+      "owner_type_id": "type::demo::query::Document",
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/query.rs",
+        "start_line": 12,
+        "end_line": 22
+      },
+      "docs": "Query a path inside the document.",
+      "doc_sections": {
+        "summary": "Query a path inside the document.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "inherent_method",
+      "signature_text": "pub fn pointer(&self, path: &str) -> Option<&str>",
+      "receiver": "&self",
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": ["&str"],
+      "return_type": "Option<&str>",
+      "return_shape": {
+        "kind": "option",
+        "inner_types": ["&str"]
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::demo::query::Parser::new",
+      "name": "new",
+      "canonical_path": "demo::query::Parser::new",
+      "public_paths": ["demo::query::Parser::new"],
+      "public_anchor_module_id": "mod::demo::query",
+      "owner_type_id": "type::demo::query::Parser",
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/query.rs",
+        "start_line": 28,
+        "end_line": 30
+      },
+      "docs": "Create a new parser.",
+      "doc_sections": {
+        "summary": "Create a new parser.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "constructor",
+      "signature_text": "pub fn new() -> Parser",
+      "receiver": null,
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [],
+      "return_type": "demo::query::Parser",
+      "return_shape": {
+        "kind": "nominal",
+        "inner_types": ["demo::query::Parser"]
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::demo::query::Parser::start",
+      "name": "start",
+      "canonical_path": "demo::query::Parser::start",
+      "public_paths": ["demo::query::Parser::start"],
+      "public_anchor_module_id": "mod::demo::query",
+      "owner_type_id": "type::demo::query::Parser",
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/query.rs",
+        "start_line": 32,
+        "end_line": 36
+      },
+      "docs": "Start reading from the parser.",
+      "doc_sections": {
+        "summary": "Start reading from the parser.",
+        "panics": "Panics if the parser is already closed.",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "inherent_method",
+      "signature_text": "pub fn start(&mut self)",
+      "receiver": "&mut self",
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [],
+      "return_type": "()",
+      "return_shape": {
+        "kind": "unit",
+        "inner_types": []
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::demo::query::Parser::close",
+      "name": "close",
+      "canonical_path": "demo::query::Parser::close",
+      "public_paths": ["demo::query::Parser::close"],
+      "public_anchor_module_id": "mod::demo::query",
+      "owner_type_id": "type::demo::query::Parser",
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/query.rs",
+        "start_line": 38,
+        "end_line": 42
+      },
+      "docs": "Close the parser.",
+      "doc_sections": {
+        "summary": "Close the parser.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "inherent_method",
+      "signature_text": "pub fn close(&mut self)",
+      "receiver": "&mut self",
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [],
+      "return_type": "()",
+      "return_shape": {
+        "kind": "unit",
+        "inner_types": []
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::demo::io::ffi_probe",
+      "name": "ffi_probe",
+      "canonical_path": "demo::io::ffi_probe",
+      "public_paths": ["demo::io::ffi_probe"],
+      "public_anchor_module_id": "mod::demo::io",
+      "owner_type_id": null,
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/io.rs",
+        "start_line": 44,
+        "end_line": 46
+      },
+      "docs": "Probe the FFI boundary.",
+      "doc_sections": {
+        "summary": "Probe the FFI boundary.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "free_function",
+      "signature_text": "pub extern \"C\" fn ffi_probe() -> i32",
+      "receiver": null,
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [],
+      "return_type": "i32",
+      "return_shape": {
+        "kind": "primitive",
+        "inner_types": ["i32"]
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    }
+  ],
+  "symbols": [],
+  "trait_registry": [
+    {
+      "trait_id": "trait::demo::io::Reader",
+      "name": "Reader",
+      "canonical_path": "demo::io::Reader",
+      "public_paths": ["demo::io::Reader"],
+      "public_anchor_module_id": "mod::demo::io",
+      "code_ref": {
+        "file": "src/io.rs",
+        "start_line": 20,
+        "end_line": 26
+      },
+      "docs": "Input reader abstraction.",
+      "doc_sections": {
+        "summary": "Input reader abstraction.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "origin": "local",
+      "exposure_kinds": ["defined"],
+      "is_unsafe": false,
+      "direct_supertrait_ids": ["trait::core::fmt::Debug"],
+      "required_methods": ["next_chunk"],
+      "provided_methods": [],
+      "associated_type_defs": [
+        {
+          "name": "Item",
+          "generic_params": [],
+          "where_clauses": [],
+          "bounds": ["core::fmt::Debug"],
+          "default_type": null,
+          "source": null
+        }
+      ],
+      "associated_const_defs": [],
+      "used_by_api_ids": ["api::demo::io::from_reader"],
+      "used_by_trait_ids": [],
+      "used_by_type_ids": []
+    },
+    {
+      "trait_id": "trait::core::fmt::Debug",
+      "name": "Debug",
+      "canonical_path": "core::fmt::Debug",
+      "public_paths": [],
+      "public_anchor_module_id": null,
+      "code_ref": null,
+      "docs": "",
+      "doc_sections": {
+        "summary": "",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "origin": "external",
+      "exposure_kinds": ["supertrait_dependency"],
+      "is_unsafe": false,
+      "direct_supertrait_ids": [],
+      "required_methods": [],
+      "provided_methods": [],
+      "associated_type_defs": [],
+      "associated_const_defs": [],
+      "used_by_api_ids": [],
+      "used_by_trait_ids": ["trait::demo::io::Reader"],
+      "used_by_type_ids": []
+    }
+  ],
+  "trait_impl_registry": [],
+  "examples": [],
+  "risk_facts": {
+    "extern_abi_apis": [
+      {
+        "api_id": "api::demo::io::ffi_probe",
+        "abi": "C",
+        "source": {
+          "file": "src/io.rs",
+          "start_line": 44,
+          "end_line": 46
+        }
+      }
+    ],
+    "repr_types": [],
+    "drop_impl_types": ["type::demo::query::Parser"],
+    "explicit_panic_sites": [],
+    "borrowed_return_apis": [
+      {
+        "api_id": "api::demo::query::Document::pointer",
+        "return_type_text": "Option<&str>",
+        "from_self": true,
+        "from_arg_positions": [],
+        "lifetime_names": [],
+        "source": {
+          "file": "src/query.rs",
+          "start_line": 12,
+          "end_line": 22
+        }
+      }
+    ]
+  }
+}

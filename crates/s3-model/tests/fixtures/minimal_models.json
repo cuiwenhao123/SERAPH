@@ -1,0 +1,292 @@
+{
+  "fcg": {
+    "capabilities": [
+      {
+        "cap_id": "cap::demo::io",
+        "name": "Input and loading APIs.",
+        "description": "Input and loading APIs.",
+        "api_ids": [
+          "api::demo::io::from_reader",
+          "api::demo::io::ffi_probe"
+        ],
+        "entry_api_ids": [
+          "api::demo::io::from_reader",
+          "api::demo::io::ffi_probe"
+        ],
+        "connects_to": [
+          "cap::demo::query"
+        ]
+      },
+      {
+        "cap_id": "cap::demo::query",
+        "name": "Querying loaded documents.",
+        "description": "Querying loaded documents.",
+        "api_ids": [
+          "api::demo::query::Document::pointer",
+          "api::demo::query::Parser::new",
+          "api::demo::query::Parser::start",
+          "api::demo::query::Parser::close"
+        ],
+        "entry_api_ids": [
+          "api::demo::query::Parser::new"
+        ],
+        "connects_to": []
+      }
+    ],
+    "capability_chains": [
+      [
+        "cap::demo::io",
+        "cap::demo::query"
+      ]
+    ],
+    "capability_api_index": {
+      "cap::demo::io": [
+        "api::demo::io::from_reader",
+        "api::demo::io::ffi_probe"
+      ],
+      "cap::demo::query": [
+        "api::demo::query::Document::pointer",
+        "api::demo::query::Parser::new",
+        "api::demo::query::Parser::start",
+        "api::demo::query::Parser::close"
+      ]
+    },
+    "stage1_summary": "本库提供 2 项核心能力：Input and loading APIs.（2 个 API）；Querying loaded documents.（4 个 API）。典型能力链：Input and loading APIs.→Querying loaded documents."
+  },
+  "slm": [
+    {
+      "type_id": "type::demo::query::Parser",
+      "path": "demo::query::Parser",
+      "model_kind": "full",
+      "states": [
+        "Constructed",
+        "Active",
+        "Closed"
+      ],
+      "transitions": [
+        {
+          "from": "Uninitialized",
+          "to": "Constructed",
+          "via_api_id": "api::demo::query::Parser::new",
+          "preconditions": []
+        },
+        {
+          "from": "Constructed",
+          "to": "Active",
+          "via_api_id": "api::demo::query::Parser::start",
+          "preconditions": []
+        },
+        {
+          "from": "Active",
+          "to": "Closed",
+          "via_api_id": "api::demo::query::Parser::close",
+          "preconditions": []
+        }
+      ],
+      "fuzzable_states": [
+        "Active"
+      ],
+      "forbidden_transitions": [
+        {
+          "from": "Closed",
+          "via_api_id": "api::demo::query::Parser::start",
+          "reason": "Panics if the parser is already closed."
+        }
+      ]
+    }
+  ],
+  "api_contracts": [
+    {
+      "api_id": "api::demo::io::from_reader",
+      "path": "demo::io::from_reader",
+      "preconditions": [],
+      "postconditions": [
+        "returns Result<demo::query::Document>"
+      ],
+      "panic_conditions": [],
+      "error_conditions": [
+        "Returns an error when input is malformed."
+      ],
+      "safety": null,
+      "side_effects": [
+        "consumes input bytes"
+      ],
+      "generic_constraints": {
+        "params": [
+          {
+            "name": "R",
+            "direct_bounds": [
+              "demo::io::Reader"
+            ],
+            "full_bound_chain": [
+              "demo::io::Reader",
+              "core::fmt::Debug"
+            ],
+            "associated_type_constraints": [
+              {
+                "trait_id": "trait::demo::io::Reader",
+                "trait_path": "demo::io::Reader",
+                "associated_type_name": "Item",
+                "bounds": [
+                  "core::fmt::Debug"
+                ]
+              }
+            ],
+            "is_unsafe_trait": false,
+            "strategy": "C",
+            "bug_hunting_value": "HIGH",
+            "synthesis_guidance": "custom reader with short-read"
+          }
+        ]
+      }
+    },
+    {
+      "api_id": "api::demo::query::Document::pointer",
+      "path": "demo::query::Document::pointer",
+      "preconditions": [],
+      "postconditions": [
+        "returns Option<&str>"
+      ],
+      "panic_conditions": [],
+      "error_conditions": [],
+      "safety": null,
+      "side_effects": [],
+      "generic_constraints": null
+    },
+    {
+      "api_id": "api::demo::query::Parser::new",
+      "path": "demo::query::Parser::new",
+      "preconditions": [],
+      "postconditions": [
+        "returns demo::query::Parser"
+      ],
+      "panic_conditions": [],
+      "error_conditions": [],
+      "safety": null,
+      "side_effects": [],
+      "generic_constraints": null
+    },
+    {
+      "api_id": "api::demo::query::Parser::start",
+      "path": "demo::query::Parser::start",
+      "preconditions": [
+        "Panics if the parser is already closed."
+      ],
+      "postconditions": [
+        "returns ()"
+      ],
+      "panic_conditions": [
+        "Panics if the parser is already closed."
+      ],
+      "error_conditions": [],
+      "safety": null,
+      "side_effects": [
+        "mutates receiver"
+      ],
+      "generic_constraints": null
+    },
+    {
+      "api_id": "api::demo::query::Parser::close",
+      "path": "demo::query::Parser::close",
+      "preconditions": [],
+      "postconditions": [
+        "returns ()"
+      ],
+      "panic_conditions": [],
+      "error_conditions": [],
+      "safety": null,
+      "side_effects": [
+        "mutates receiver"
+      ],
+      "generic_constraints": null
+    },
+    {
+      "api_id": "api::demo::io::ffi_probe",
+      "path": "demo::io::ffi_probe",
+      "preconditions": [],
+      "postconditions": [
+        "returns i32"
+      ],
+      "panic_conditions": [],
+      "error_conditions": [],
+      "safety": null,
+      "side_effects": [
+        "crosses extern ABI boundary"
+      ],
+      "generic_constraints": null
+    }
+  ],
+  "risk_surface_map": {
+    "api_risks": [
+      {
+        "api_id": "api::demo::io::from_reader",
+        "risk_level": "high",
+        "reasons": [
+          "external input surface",
+          "generic synthesis strategy C",
+          "recoverable error path"
+        ],
+        "recommended_fuzz_strategy": "raw bytes + custom reader"
+      },
+      {
+        "api_id": "api::demo::query::Document::pointer",
+        "risk_level": "low",
+        "reasons": [
+          "borrowed return ties output to input"
+        ],
+        "recommended_fuzz_strategy": "reuse owner and borrowed output across state changes"
+      },
+      {
+        "api_id": "api::demo::query::Parser::new",
+        "risk_level": "low",
+        "reasons": [],
+        "recommended_fuzz_strategy": "exercise documented public entry points"
+      },
+      {
+        "api_id": "api::demo::query::Parser::start",
+        "risk_level": "low",
+        "reasons": [
+          "documented panic conditions"
+        ],
+        "recommended_fuzz_strategy": "exercise documented public entry points"
+      },
+      {
+        "api_id": "api::demo::query::Parser::close",
+        "risk_level": "low",
+        "reasons": [],
+        "recommended_fuzz_strategy": "exercise documented public entry points"
+      },
+      {
+        "api_id": "api::demo::io::ffi_probe",
+        "risk_level": "medium",
+        "reasons": [
+          "extern ABI boundary"
+        ],
+        "recommended_fuzz_strategy": "ffi boundary inputs"
+      }
+    ],
+    "type_synthesis_overview": {
+      "generic_api_count": 1,
+      "strategy_distribution": {
+        "C": 1
+      },
+      "one_liner": "1 个泛型 API，其中 1 个适合自定义类型合成"
+    },
+    "rust_feature_risks": [
+      {
+        "feature": "extern_abi",
+        "apis_affected": [
+          "api::demo::io::ffi_probe"
+        ],
+        "risk": "public API crosses a non-Rust ABI boundary"
+      },
+      {
+        "feature": "borrowed_return",
+        "apis_affected": [
+          "api::demo::query::Document::pointer"
+        ],
+        "risk": "returned value borrows from self or input arguments"
+      }
+    ]
+  }
+}

@@ -52,6 +52,11 @@ dependencies = [
 [[package]]
 name = "s3-model"
 version = "0.1.0"
+dependencies = [
+ "seraph-types",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "seraph-cli"
