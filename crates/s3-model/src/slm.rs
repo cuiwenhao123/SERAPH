@@ -21,7 +21,7 @@ pub fn build_slm_models(knowledge: &Knowledge) -> Vec<StateLifecycleModel> {
                 return None;
             }
 
-            let model_kind = if score >= 3 {
+            let mut model_kind = if score >= 3 {
                 SlmModelKind::Full
             } else {
                 SlmModelKind::Simplified
@@ -31,9 +31,18 @@ pub fn build_slm_models(knowledge: &Knowledge) -> Vec<StateLifecycleModel> {
                 .iter()
                 .filter(|api| api.owner_type_id.as_ref() == Some(&ty.type_id))
                 .collect::<Vec<_>>();
-            let states = build_states(&related_apis, model_kind);
-            let transitions = build_transitions(&related_apis, model_kind, &states);
+            let mut states = build_states(&related_apis, model_kind);
+            let mut transitions = build_transitions(&related_apis, model_kind, &states);
             let forbidden_transitions = build_forbidden_transitions(&related_apis);
+
+            if matches!(model_kind, SlmModelKind::Full)
+                && !qualifies_for_full_model(&states, &transitions, &forbidden_transitions)
+            {
+                model_kind = SlmModelKind::Simplified;
+                states = build_states(&related_apis, model_kind);
+                transitions = build_transitions(&related_apis, model_kind, &states);
+            }
+
             let fuzzable_states = choose_fuzzable_states(&states);
 
             Some(StateLifecycleModel {
@@ -47,6 +56,22 @@ pub fn build_slm_models(knowledge: &Knowledge) -> Vec<StateLifecycleModel> {
             })
         })
         .collect()
+}
+
+fn qualifies_for_full_model(
+    states: &[String],
+    transitions: &[StateTransition],
+    forbidden_transitions: &[ForbiddenTransition],
+) -> bool {
+    let has_nontrivial_state = states
+        .iter()
+        .any(|state| !matches!(state.as_str(), "Constructed" | "InUse"));
+    let has_non_constructor_transition = transitions.iter().any(|transition| {
+        !(transition.from == "Uninitialized" && transition.to == "Constructed")
+            && !(transition.from == "Constructed" && transition.to == "Constructed")
+    });
+
+    has_nontrivial_state && (has_non_constructor_transition || !forbidden_transitions.is_empty())
 }
 
 fn score_type(knowledge: &Knowledge, type_id: &TypeId, drop_types: &BTreeSet<TypeId>) -> u32 {

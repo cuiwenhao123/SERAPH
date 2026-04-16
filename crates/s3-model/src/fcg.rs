@@ -96,6 +96,9 @@ pub fn build_fcg(knowledge: &Knowledge) -> FunctionalCapabilityGraph {
         }
 
         for api_id in &capability.api_ids {
+            if !role_allows_cross_anchor(capability.role) {
+                continue;
+            }
             let Some(api) = api_index.get(api_id) else {
                 continue;
             };
@@ -384,6 +387,10 @@ fn preferred_type_capability(
     })
 }
 
+fn role_allows_cross_anchor(role: CapabilityRole) -> bool {
+    matches!(role, CapabilityRole::Construction | CapabilityRole::Conversion)
+}
+
 fn candidate_return_types(api: &ApiInfo) -> Vec<String> {
     let mut candidates = Vec::new();
     if let Some(return_type) = &api.return_type {
@@ -611,22 +618,68 @@ fn build_stage1_summary(
         })
         .collect::<Vec<_>>();
 
-    let one_liner = if capabilities.is_empty() {
-        "本库当前没有识别到核心能力。".to_owned()
-    } else {
-        let names = capabilities
-            .iter()
-            .map(|cap| cap.name.as_str())
-            .collect::<Vec<_>>()
-            .join("、");
-        format!("本库提供 {} 项核心能力：{}。", capabilities.len(), names)
-    };
+    let one_liner = summarize_capabilities(capabilities, chains);
 
     Stage1Summary {
         capability_cards,
         recommended_chains: chains.to_vec(),
         one_liner,
     }
+}
+
+fn summarize_capabilities(capabilities: &[CapabilityDraft], chains: &[Vec<CapId>]) -> String {
+    if capabilities.is_empty() {
+        return "0项能力。".to_owned();
+    }
+
+    let featured = select_featured_capabilities(capabilities, chains, 3);
+    let featured_names = featured
+        .iter()
+        .map(|cap| cap.name.as_str())
+        .collect::<Vec<_>>()
+        .join("、");
+
+    if capabilities.len() <= featured.len() {
+        format!("{}项能力：{}。", capabilities.len(), featured_names)
+    } else {
+        format!("{}项能力：{}等。", capabilities.len(), featured_names)
+    }
+}
+
+fn select_featured_capabilities<'a>(
+    capabilities: &'a [CapabilityDraft],
+    chains: &[Vec<CapId>],
+    limit: usize,
+) -> Vec<&'a CapabilityDraft> {
+    let chain_heads = chains
+        .iter()
+        .filter_map(|chain| chain.first().cloned())
+        .collect::<BTreeSet<_>>();
+    let chain_members = chains
+        .iter()
+        .flat_map(|chain| chain.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    let mut ranked = capabilities.iter().collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        feature_rank(right, &chain_heads, &chain_members)
+            .cmp(&feature_rank(left, &chain_heads, &chain_members))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    ranked.into_iter().take(limit).collect()
+}
+
+fn feature_rank(
+    capability: &CapabilityDraft,
+    chain_heads: &BTreeSet<CapId>,
+    chain_members: &BTreeSet<CapId>,
+) -> (bool, bool, bool, usize, bool) {
+    (
+        !capability.entry_api_ids.is_empty(),
+        chain_heads.contains(&capability.cap_id),
+        matches!(capability.role, CapabilityRole::Ffi | CapabilityRole::Finalization),
+        capability.api_ids.len(),
+        chain_members.contains(&capability.cap_id),
+    )
 }
 
 fn short_name(path: &str) -> &str {

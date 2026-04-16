@@ -133,7 +133,7 @@ fn fcg_emits_type_centered_capabilities_and_structured_stage1_summary() {
                     && card.anchor_path == "demo::io"
             })
     );
-    assert!(models.fcg.stage1_summary.one_liner.contains("本库提供"));
+    assert!(models.fcg.stage1_summary.one_liner.contains("项能力"));
     assert!(
         models
             .fcg
@@ -242,6 +242,89 @@ fn fcg_does_not_connect_ambiguous_short_type_names() {
                     seraph_types::CapId::from("cap::demo::query::Document::query")
                 ])
     );
+}
+
+#[test]
+fn fcg_avoids_query_to_query_cross_anchor_edges_and_compresses_one_liner() {
+    let mut knowledge = fixture_knowledge();
+
+    knowledge.types.push(seraph_types::TypeInfo {
+        type_id: seraph_types::TypeId::from("type::demo::status::Status"),
+        name: "Status".into(),
+        canonical_path: "demo::status::Status".into(),
+        public_paths: vec!["demo::status::Status".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::status"),
+        code_ref: CodeRef {
+            file: "src/status.rs".into(),
+            start_line: 1,
+            end_line: 8,
+        },
+        docs: "Simple status value.".into(),
+        doc_sections: DocSections::default(),
+        kind: seraph_types::TypeKind::Struct,
+        generic_params: vec![],
+        where_clauses: vec![],
+        is_non_exhaustive: false,
+        fields: vec![],
+        variants: vec![],
+        has_hidden_fields: false,
+        has_hidden_variants: false,
+    });
+
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::status::Status::code"),
+        name: "code".into(),
+        canonical_path: "demo::status::Status::code".into(),
+        public_paths: vec!["demo::status::Status::code".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::status"),
+        owner_type_id: Some(seraph_types::TypeId::from("type::demo::status::Status")),
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/status.rs".into(),
+            start_line: 10,
+            end_line: 10,
+        },
+        docs: "Returns the numeric code.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::InherentMethod,
+        signature_text: "pub fn code(&self) -> u32".into(),
+        receiver: Some("&self".into()),
+        generic_params: vec![],
+        where_clauses: vec![],
+        arg_types: vec![],
+        return_type: Some("u32".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Primitive,
+            inner_types: vec![],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+
+    let pointer = knowledge
+        .apis
+        .iter_mut()
+        .find(|api| api.canonical_path == "demo::query::Document::pointer")
+        .unwrap();
+    pointer.return_type = Some("Option<demo::status::Status>".into());
+    pointer.return_shape = Some(seraph_types::ReturnShape {
+        kind: seraph_types::ReturnShapeKind::Option,
+        inner_types: vec!["demo::status::Status".into()],
+    });
+
+    let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
+    let document_query = models
+        .fcg
+        .capabilities
+        .iter()
+        .find(|cap| cap.cap_id == seraph_types::CapId::from("cap::demo::query::Document::query"))
+        .unwrap();
+
+    assert!(document_query.connects_to.is_empty());
+    assert!(models.fcg.stage1_summary.one_liner.len() <= 80);
 }
 
 #[test]
@@ -407,6 +490,80 @@ fn slm_only_emits_error_when_recovery_api_exists() {
         .unwrap();
 
     assert!(parser_model.states.contains(&"Error".to_string()));
+}
+
+#[test]
+fn slm_downgrades_drop_only_types_without_runtime_states() {
+    let mut knowledge = fixture_knowledge();
+
+    knowledge.types.push(seraph_types::TypeInfo {
+        type_id: seraph_types::TypeId::from("type::demo::drop::DropBomb"),
+        name: "DropBomb".into(),
+        canonical_path: "demo::drop::DropBomb".into(),
+        public_paths: vec!["demo::drop::DropBomb".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::drop"),
+        code_ref: CodeRef {
+            file: "src/drop.rs".into(),
+            start_line: 1,
+            end_line: 8,
+        },
+        docs: "Stateful drop bomb.".into(),
+        doc_sections: DocSections::default(),
+        kind: seraph_types::TypeKind::Struct,
+        generic_params: vec![],
+        where_clauses: vec![],
+        is_non_exhaustive: false,
+        fields: vec![],
+        variants: vec![],
+        has_hidden_fields: false,
+        has_hidden_variants: false,
+    });
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::drop::DropBomb::new"),
+        name: "new".into(),
+        canonical_path: "demo::drop::DropBomb::new".into(),
+        public_paths: vec!["demo::drop::DropBomb::new".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::drop"),
+        owner_type_id: Some(seraph_types::TypeId::from("type::demo::drop::DropBomb")),
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/drop.rs".into(),
+            start_line: 10,
+            end_line: 10,
+        },
+        docs: "Creates a drop bomb.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::Constructor,
+        signature_text: "pub fn new() -> DropBomb".into(),
+        receiver: None,
+        generic_params: vec![],
+        where_clauses: vec![],
+        arg_types: vec![],
+        return_type: Some("DropBomb".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Nominal,
+            inner_types: vec!["DropBomb".into()],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+    knowledge
+        .risk_facts
+        .drop_impl_types
+        .push(seraph_types::TypeId::from("type::demo::drop::DropBomb"));
+
+    let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
+    let model = models
+        .slm
+        .iter()
+        .find(|model| model.path == "demo::drop::DropBomb")
+        .unwrap();
+
+    assert_eq!(model.model_kind, seraph_types::SlmModelKind::Simplified);
+    assert_eq!(model.states, vec!["Constructed".to_string()]);
 }
 
 #[test]
