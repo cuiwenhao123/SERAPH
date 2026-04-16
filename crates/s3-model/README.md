@@ -15,6 +15,24 @@
   - `api_contracts`
   - `risk_surface_map`
 
+## Phase 2 model shape
+
+- `fcg`
+  - type-centered capability graph keyed by `cap_id`
+  - each capability is anchored to either a public type or a synthetic module entry
+  - capability nodes carry a semantic `role` such as `construction`, `query`, `mutation`, or `ffi`
+  - `stage1_summary` is structured data, not a single prose string
+- `slm`
+  - emits `simplified` or `full` lifecycle models for stateful public types only
+  - keeps forbidden transitions evidence-backed from documented panic text
+  - only introduces `Error` when a recovery-style API is present
+- `api_contracts`
+  - keeps `preconditions`, `panic_conditions`, `error_conditions`, `side_effects`, and `generic_constraints`
+  - preconditions are derived only from documented `# Safety` text and panic conditions that read like state guards
+- `risk_surface_map`
+  - aggregates per-API risk levels plus crate-wide Rust feature risks
+  - currently covers features such as `extern_abi`, `borrowed_return`, `repr_packed`, `conditional_impl`, and `panic_in_drop`
+
 ## Deterministic guarantees
 
 - No LLM calls
