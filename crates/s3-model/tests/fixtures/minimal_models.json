@@ -2,56 +2,196 @@
   "fcg": {
     "capabilities": [
       {
-        "cap_id": "cap::demo::io",
-        "name": "Input and loading APIs.",
-        "description": "Input and loading APIs.",
+        "cap_id": "cap::demo::io::module_entry::construction",
+        "anchor_kind": "module_entry",
+        "anchor_module_id": "mod::demo::io",
+        "anchor_type_id": null,
+        "role": "construction",
+        "name": "io 入口构造",
+        "description": "Input and loading APIs.：创建对象或进入主流程的入口 API",
         "api_ids": [
-          "api::demo::io::from_reader",
-          "api::demo::io::ffi_probe"
+          "api::demo::io::from_reader"
         ],
         "entry_api_ids": [
-          "api::demo::io::from_reader",
-          "api::demo::io::ffi_probe"
+          "api::demo::io::from_reader"
         ],
         "connects_to": [
-          "cap::demo::query"
+          "cap::demo::query::Document::query"
         ]
       },
       {
-        "cap_id": "cap::demo::query",
-        "name": "Querying loaded documents.",
-        "description": "Querying loaded documents.",
+        "cap_id": "cap::demo::io::module_entry::ffi",
+        "anchor_kind": "module_entry",
+        "anchor_module_id": "mod::demo::io",
+        "anchor_type_id": null,
+        "role": "ffi",
+        "name": "io 入口FFI",
+        "description": "Input and loading APIs.：显式 ABI / FFI 边界相关 API",
         "api_ids": [
-          "api::demo::query::Document::pointer",
-          "api::demo::query::Parser::new",
-          "api::demo::query::Parser::start",
-          "api::demo::query::Parser::close"
+          "api::demo::io::ffi_probe"
+        ],
+        "entry_api_ids": [
+          "api::demo::io::ffi_probe"
+        ],
+        "connects_to": []
+      },
+      {
+        "cap_id": "cap::demo::query::Document::query",
+        "anchor_kind": "type",
+        "anchor_module_id": "mod::demo::query",
+        "anchor_type_id": "type::demo::query::Document",
+        "role": "query",
+        "name": "Document 查询",
+        "description": "Loaded document.：围绕对象的只读访问与检查",
+        "api_ids": [
+          "api::demo::query::Document::pointer"
+        ],
+        "entry_api_ids": [],
+        "connects_to": []
+      },
+      {
+        "cap_id": "cap::demo::query::Parser::construction",
+        "anchor_kind": "type",
+        "anchor_module_id": "mod::demo::query",
+        "anchor_type_id": "type::demo::query::Parser",
+        "role": "construction",
+        "name": "Parser 构造",
+        "description": "Stateful parser with explicit close semantics.：创建对象或进入主流程的入口 API",
+        "api_ids": [
+          "api::demo::query::Parser::new"
         ],
         "entry_api_ids": [
           "api::demo::query::Parser::new"
         ],
+        "connects_to": [
+          "cap::demo::query::Parser::finalization",
+          "cap::demo::query::Parser::mutation"
+        ]
+      },
+      {
+        "cap_id": "cap::demo::query::Parser::finalization",
+        "anchor_kind": "type",
+        "anchor_module_id": "mod::demo::query",
+        "anchor_type_id": "type::demo::query::Parser",
+        "role": "finalization",
+        "name": "Parser 终结",
+        "description": "Stateful parser with explicit close semantics.：将对象推进到终态或关闭流程",
+        "api_ids": [
+          "api::demo::query::Parser::close"
+        ],
+        "entry_api_ids": [],
+        "connects_to": []
+      },
+      {
+        "cap_id": "cap::demo::query::Parser::mutation",
+        "anchor_kind": "type",
+        "anchor_module_id": "mod::demo::query",
+        "anchor_type_id": "type::demo::query::Parser",
+        "role": "mutation",
+        "name": "Parser 修改",
+        "description": "Stateful parser with explicit close semantics.：围绕对象的可变更新与状态变化",
+        "api_ids": [
+          "api::demo::query::Parser::start"
+        ],
+        "entry_api_ids": [],
         "connects_to": []
       }
     ],
     "capability_chains": [
       [
-        "cap::demo::io",
-        "cap::demo::query"
+        "cap::demo::io::module_entry::construction",
+        "cap::demo::query::Document::query"
+      ],
+      [
+        "cap::demo::query::Parser::construction",
+        "cap::demo::query::Parser::finalization"
+      ],
+      [
+        "cap::demo::query::Parser::construction",
+        "cap::demo::query::Parser::mutation"
       ]
     ],
     "capability_api_index": {
-      "cap::demo::io": [
-        "api::demo::io::from_reader",
+      "cap::demo::io::module_entry::construction": [
+        "api::demo::io::from_reader"
+      ],
+      "cap::demo::io::module_entry::ffi": [
         "api::demo::io::ffi_probe"
       ],
-      "cap::demo::query": [
-        "api::demo::query::Document::pointer",
-        "api::demo::query::Parser::new",
-        "api::demo::query::Parser::start",
+      "cap::demo::query::Document::query": [
+        "api::demo::query::Document::pointer"
+      ],
+      "cap::demo::query::Parser::construction": [
+        "api::demo::query::Parser::new"
+      ],
+      "cap::demo::query::Parser::finalization": [
         "api::demo::query::Parser::close"
+      ],
+      "cap::demo::query::Parser::mutation": [
+        "api::demo::query::Parser::start"
       ]
     },
-    "stage1_summary": "本库提供 2 项核心能力：Input and loading APIs.（2 个 API）；Querying loaded documents.（4 个 API）。典型能力链：Input and loading APIs.→Querying loaded documents."
+    "stage1_summary": {
+      "capability_cards": [
+        {
+          "cap_id": "cap::demo::io::module_entry::construction",
+          "name": "io 入口构造",
+          "anchor_path": "demo::io",
+          "role": "construction",
+          "description": "Input and loading APIs.：创建对象或进入主流程的入口 API"
+        },
+        {
+          "cap_id": "cap::demo::io::module_entry::ffi",
+          "name": "io 入口FFI",
+          "anchor_path": "demo::io",
+          "role": "ffi",
+          "description": "Input and loading APIs.：显式 ABI / FFI 边界相关 API"
+        },
+        {
+          "cap_id": "cap::demo::query::Document::query",
+          "name": "Document 查询",
+          "anchor_path": "demo::query::Document",
+          "role": "query",
+          "description": "Loaded document.：围绕对象的只读访问与检查"
+        },
+        {
+          "cap_id": "cap::demo::query::Parser::construction",
+          "name": "Parser 构造",
+          "anchor_path": "demo::query::Parser",
+          "role": "construction",
+          "description": "Stateful parser with explicit close semantics.：创建对象或进入主流程的入口 API"
+        },
+        {
+          "cap_id": "cap::demo::query::Parser::finalization",
+          "name": "Parser 终结",
+          "anchor_path": "demo::query::Parser",
+          "role": "finalization",
+          "description": "Stateful parser with explicit close semantics.：将对象推进到终态或关闭流程"
+        },
+        {
+          "cap_id": "cap::demo::query::Parser::mutation",
+          "name": "Parser 修改",
+          "anchor_path": "demo::query::Parser",
+          "role": "mutation",
+          "description": "Stateful parser with explicit close semantics.：围绕对象的可变更新与状态变化"
+        }
+      ],
+      "recommended_chains": [
+        [
+          "cap::demo::io::module_entry::construction",
+          "cap::demo::query::Document::query"
+        ],
+        [
+          "cap::demo::query::Parser::construction",
+          "cap::demo::query::Parser::finalization"
+        ],
+        [
+          "cap::demo::query::Parser::construction",
+          "cap::demo::query::Parser::mutation"
+        ]
+      ],
+      "one_liner": "本库提供 6 项核心能力：io 入口构造、io 入口FFI、Document 查询、Parser 构造、Parser 终结、Parser 修改。"
+    }
   },
   "slm": [
     {
@@ -169,7 +309,9 @@
     {
       "api_id": "api::demo::query::Parser::start",
       "path": "demo::query::Parser::start",
-      "preconditions": [],
+      "preconditions": [
+        "Panics if the parser is already closed."
+      ],
       "postconditions": [
         "returns ()"
       ],

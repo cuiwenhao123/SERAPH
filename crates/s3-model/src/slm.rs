@@ -124,9 +124,21 @@ fn build_states(related_apis: &[&ApiInfo], model_kind: SlmModelKind) -> Vec<Stri
 
     if related_apis
         .iter()
+        .any(|api| !is_constructor_like(api) && is_configure_like(api.name.as_str()))
+    {
+        states.push("Configured".to_owned());
+    }
+    if related_apis
+        .iter()
         .any(|api| !is_constructor_like(api) && is_activate_like(api.name.as_str()))
     {
         states.push("Active".to_owned());
+    }
+    if related_apis
+        .iter()
+        .any(|api| !is_constructor_like(api) && is_recovery_like(api.name.as_str()))
+    {
+        states.push("Error".to_owned());
     }
     if related_apis
         .iter()
@@ -143,7 +155,9 @@ fn build_transitions(
     states: &[String],
 ) -> Vec<StateTransition> {
     let mut transitions = Vec::new();
+    let has_configured_state = states.iter().any(|state| state == "Configured");
     let has_active_state = states.iter().any(|state| state == "Active");
+    let has_error_state = states.iter().any(|state| state == "Error");
 
     for api in related_apis {
         if is_constructor_like(api) {
@@ -162,17 +176,33 @@ fn build_transitions(
             } else {
                 ("Constructed", "InUse")
             }
+        } else if is_configure_like(api.name.as_str()) {
+            ("Constructed", "Configured")
         } else if is_activate_like(api.name.as_str()) {
-            ("Constructed", "Active")
+            if has_configured_state {
+                ("Configured", "Active")
+            } else {
+                ("Constructed", "Active")
+            }
+        } else if is_recovery_like(api.name.as_str()) {
+            if has_error_state {
+                ("Error", "Constructed")
+            } else {
+                ("Constructed", "Constructed")
+            }
         } else if is_close_like(api.name.as_str()) {
             if has_active_state {
                 ("Active", "Closed")
+            } else if has_configured_state {
+                ("Configured", "Closed")
             } else {
                 ("Constructed", "Closed")
             }
         } else {
             if has_active_state {
                 ("Active", "Active")
+            } else if has_configured_state {
+                ("Configured", "Configured")
             } else {
                 ("Constructed", "Constructed")
             }
@@ -239,8 +269,16 @@ fn is_activate_like(name: &str) -> bool {
     matches!(name, "start" | "open" | "connect" | "begin")
 }
 
+fn is_configure_like(name: &str) -> bool {
+    matches!(name, "configure" | "set_config" | "configure_with")
+}
+
 fn is_close_like(name: &str) -> bool {
     matches!(name, "close" | "finish" | "shutdown" | "end")
+}
+
+fn is_recovery_like(name: &str) -> bool {
+    matches!(name, "reset" | "retry" | "reconnect" | "recover")
 }
 
 fn infer_forbidden_from_state(reason: &str) -> String {

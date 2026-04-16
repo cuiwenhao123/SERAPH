@@ -210,6 +210,59 @@ fn build_rust_feature_risks(knowledge: &Knowledge) -> Vec<RustFeatureRisk> {
         });
     }
 
+    let conditional_impl_apis = knowledge
+        .trait_impl_registry
+        .iter()
+        .filter(|impl_info| !impl_info.cfg_attrs.is_empty())
+        .flat_map(|impl_info| {
+            knowledge
+                .apis
+                .iter()
+                .filter(move |api| api.owner_type_id.as_ref() == Some(&impl_info.target_type_id))
+                .map(|api| api.api_id.clone())
+        })
+        .collect::<BTreeSet<ApiId>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if !conditional_impl_apis.is_empty() {
+        risks.push(RustFeatureRisk {
+            feature: "conditional_impl".to_owned(),
+            apis_affected: conditional_impl_apis,
+            risk: "public surface depends on cfg-gated impl availability".to_owned(),
+        });
+    }
+
+    let panic_in_drop_type_ids = knowledge
+        .trait_impl_registry
+        .iter()
+        .filter(|impl_info| impl_info.trait_canonical_path == "core::ops::drop::Drop")
+        .filter(|impl_info| {
+            knowledge.risk_facts.explicit_panic_sites.iter().any(|fact| {
+                matches!(&fact.owner, RiskOwner::TraitImpl(id) if id == &impl_info.trait_impl_id)
+            })
+        })
+        .map(|impl_info| impl_info.target_type_id.clone())
+        .collect::<BTreeSet<TypeId>>();
+    let panic_in_drop_apis = knowledge
+        .apis
+        .iter()
+        .filter_map(|api| {
+            api.owner_type_id
+                .as_ref()
+                .filter(|type_id| panic_in_drop_type_ids.contains(*type_id))
+                .map(|_| api.api_id.clone())
+        })
+        .collect::<BTreeSet<ApiId>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if !panic_in_drop_apis.is_empty() {
+        risks.push(RustFeatureRisk {
+            feature: "panic_in_drop".to_owned(),
+            apis_affected: panic_in_drop_apis,
+            risk: "Drop impl can panic during destruction".to_owned(),
+        });
+    }
+
     risks
 }
 

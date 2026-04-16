@@ -64,37 +64,87 @@ fn models_json_roundtrip_through_s3_model_io() {
 }
 
 #[test]
-fn fcg_groups_apis_by_public_anchor_module_and_builds_stage1_summary() {
+fn fcg_emits_type_centered_capabilities_and_structured_stage1_summary() {
     let knowledge: Knowledge =
         serde_json::from_str(include_str!("fixtures/minimal_knowledge.json")).unwrap();
 
     let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
 
-    assert_eq!(models.fcg.capabilities.len(), 2);
+    let io_entry = models
+        .fcg
+        .capabilities
+        .iter()
+        .find(|cap| {
+            cap.cap_id
+                == seraph_types::CapId::from("cap::demo::io::module_entry::construction")
+        })
+        .unwrap();
     assert_eq!(
         models
             .fcg
             .capability_api_index
-            .get(&seraph_types::CapId::from("cap::demo::io"))
+            .get(&seraph_types::CapId::from(
+                "cap::demo::io::module_entry::construction",
+            ))
             .unwrap()
             .as_slice(),
-        &[
-            seraph_types::ApiId::from("api::demo::io::from_reader"),
-            seraph_types::ApiId::from("api::demo::io::ffi_probe")
-        ]
+        &[seraph_types::ApiId::from("api::demo::io::from_reader")]
     );
     assert_eq!(
-        models.fcg.capabilities[0].connects_to,
-        vec![seraph_types::CapId::from("cap::demo::query")]
+        io_entry.anchor_kind,
+        seraph_types::CapabilityAnchorKind::ModuleEntry
+    );
+    assert_eq!(io_entry.role, seraph_types::CapabilityRole::Construction);
+
+    let document_query = models
+        .fcg
+        .capabilities
+        .iter()
+        .find(|cap| {
+            cap.cap_id == seraph_types::CapId::from("cap::demo::query::Document::query")
+        })
+        .unwrap();
+    assert_eq!(
+        document_query.anchor_kind,
+        seraph_types::CapabilityAnchorKind::Type
     );
     assert_eq!(
-        models.fcg.capability_chains,
-        vec![vec![
-            seraph_types::CapId::from("cap::demo::io"),
-            seraph_types::CapId::from("cap::demo::query")
-        ]]
+        document_query.anchor_type_id,
+        Some(seraph_types::TypeId::from("type::demo::query::Document"))
     );
-    assert!(models.fcg.stage1_summary.contains("本库提供 2 项核心能力"));
+    assert_eq!(document_query.role, seraph_types::CapabilityRole::Query);
+    assert_eq!(
+        io_entry.connects_to,
+        vec![seraph_types::CapId::from(
+            "cap::demo::query::Document::query"
+        )]
+    );
+    assert!(
+        models
+            .fcg
+            .stage1_summary
+            .capability_cards
+            .iter()
+            .any(|card| {
+                card.cap_id
+                    == seraph_types::CapId::from(
+                        "cap::demo::io::module_entry::construction"
+                    )
+                    && card.anchor_path == "demo::io"
+            })
+    );
+    assert!(models.fcg.stage1_summary.one_liner.contains("本库提供"));
+    assert!(
+        models
+            .fcg
+            .capability_chains
+            .iter()
+            .any(|chain| chain
+                == &vec![
+                    seraph_types::CapId::from("cap::demo::io::module_entry::construction"),
+                    seraph_types::CapId::from("cap::demo::query::Document::query")
+                ])
+    );
 }
 
 #[test]
@@ -116,19 +166,28 @@ fn fcg_connects_modules_from_unique_short_type_names_in_return_shapes() {
         .fcg
         .capabilities
         .iter()
-        .find(|cap| cap.cap_id == seraph_types::CapId::from("cap::demo::io"))
+        .find(|cap| {
+            cap.cap_id
+                == seraph_types::CapId::from("cap::demo::io::module_entry::construction")
+        })
         .unwrap();
 
     assert_eq!(
         io_cap.connects_to,
-        vec![seraph_types::CapId::from("cap::demo::query")]
+        vec![seraph_types::CapId::from(
+            "cap::demo::query::Document::query"
+        )]
     );
-    assert_eq!(
-        models.fcg.capability_chains,
-        vec![vec![
-            seraph_types::CapId::from("cap::demo::io"),
-            seraph_types::CapId::from("cap::demo::query")
-        ]]
+    assert!(
+        models
+            .fcg
+            .capability_chains
+            .iter()
+            .any(|chain| chain
+                == &vec![
+                    seraph_types::CapId::from("cap::demo::io::module_entry::construction"),
+                    seraph_types::CapId::from("cap::demo::query::Document::query")
+                ])
     );
 }
 
@@ -165,11 +224,24 @@ fn fcg_does_not_connect_ambiguous_short_type_names() {
         .fcg
         .capabilities
         .iter()
-        .find(|cap| cap.cap_id == seraph_types::CapId::from("cap::demo::io"))
+        .find(|cap| {
+            cap.cap_id
+                == seraph_types::CapId::from("cap::demo::io::module_entry::construction")
+        })
         .unwrap();
 
     assert!(io_cap.connects_to.is_empty());
-    assert!(models.fcg.capability_chains.is_empty());
+    assert!(
+        !models
+            .fcg
+            .capability_chains
+            .iter()
+            .any(|chain| chain
+                == &vec![
+                    seraph_types::CapId::from("cap::demo::io::module_entry::construction"),
+                    seraph_types::CapId::from("cap::demo::query::Document::query")
+                ])
+    );
 }
 
 #[test]
@@ -301,6 +373,43 @@ fn slm_counts_mut_self_receivers_when_phase1_uses_uppercase_self() {
 }
 
 #[test]
+fn slm_only_emits_error_when_recovery_api_exists() {
+    let mut knowledge = fixture_knowledge();
+
+    let base_models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
+    let base_parser_model = base_models
+        .slm
+        .iter()
+        .find(|model| model.path == "demo::query::Parser")
+        .unwrap();
+    assert!(!base_parser_model.states.contains(&"Error".to_string()));
+
+    let mut reset_api = knowledge
+        .apis
+        .iter()
+        .find(|api| api.canonical_path == "demo::query::Parser::close")
+        .unwrap()
+        .clone();
+    reset_api.api_id = seraph_types::ApiId::from("api::demo::query::Parser::reset");
+    reset_api.name = "reset".into();
+    reset_api.canonical_path = "demo::query::Parser::reset".into();
+    reset_api.public_paths = vec!["demo::query::Parser::reset".into()];
+    reset_api.docs = "Reset parser after an error.".into();
+    reset_api.doc_sections.summary = "Reset parser after an error.".into();
+    reset_api.doc_sections.panics.clear();
+    knowledge.apis.push(reset_api);
+
+    let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
+    let parser_model = models
+        .slm
+        .iter()
+        .find(|model| model.path == "demo::query::Parser")
+        .unwrap();
+
+    assert!(parser_model.states.contains(&"Error".to_string()));
+}
+
+#[test]
 fn contract_builder_extracts_side_effects_and_generic_constraints() {
     let knowledge: Knowledge =
         serde_json::from_str(include_str!("fixtures/minimal_knowledge.json")).unwrap();
@@ -385,7 +494,10 @@ fn contract_builder_normalizes_receiver_side_effects_and_keeps_panics_separate()
         .find(|contract| contract.path == "demo::query::Parser::start")
         .unwrap();
 
-    assert!(contract.preconditions.is_empty());
+    assert_eq!(
+        contract.preconditions,
+        vec!["Panics if the parser is already closed."]
+    );
     assert_eq!(
         contract.panic_conditions,
         vec!["Panics if the parser is already closed."]
@@ -484,4 +596,82 @@ fn risk_builder_emits_repr_packed_risk_for_affected_owner_type_apis() {
     assert!(repr_risk
         .apis_affected
         .contains(&seraph_types::ApiId::from("api::demo::query::Parser::new")));
+}
+
+#[test]
+fn risk_surface_reports_conditional_impl_and_panic_in_drop() {
+    let mut knowledge = fixture_knowledge();
+
+    knowledge
+        .trait_impl_registry
+        .push(seraph_types::TraitImplInfo {
+            trait_impl_id: "trait_impl::demo::query::FeatureExt::for::Parser".into(),
+            target_type_id: seraph_types::TypeId::from("type::demo::query::Parser"),
+            trait_ref_text: "demo::query::FeatureExt".into(),
+            for_type_text: "Parser".into(),
+            trait_id: "trait::demo::query::FeatureExt".into(),
+            trait_name: "FeatureExt".into(),
+            trait_canonical_path: "demo::query::FeatureExt".into(),
+            trait_origin: seraph_types::TraitOrigin::External,
+            source: CodeRef {
+                file: "src/query.rs".into(),
+                start_line: 60,
+                end_line: 62,
+            },
+            associated_type_bindings: vec![],
+            associated_const_bindings: vec![],
+            where_clauses: vec![],
+            cfg_attrs: vec!["#[cfg(feature = \"experimental\")]".into()],
+            is_unsafe: false,
+        });
+
+    let drop_impl_id: seraph_types::TraitImplId =
+        "trait_impl::core::ops::drop::Drop::for::Parser".into();
+    knowledge
+        .trait_impl_registry
+        .push(seraph_types::TraitImplInfo {
+            trait_impl_id: drop_impl_id.clone(),
+            target_type_id: seraph_types::TypeId::from("type::demo::query::Parser"),
+            trait_ref_text: "core::ops::drop::Drop".into(),
+            for_type_text: "Parser".into(),
+            trait_id: "trait::core::ops::drop::Drop".into(),
+            trait_name: "Drop".into(),
+            trait_canonical_path: "core::ops::drop::Drop".into(),
+            trait_origin: seraph_types::TraitOrigin::External,
+            source: CodeRef {
+                file: "src/query.rs".into(),
+                start_line: 64,
+                end_line: 66,
+            },
+            associated_type_bindings: vec![],
+            associated_const_bindings: vec![],
+            where_clauses: vec![],
+            cfg_attrs: vec![],
+            is_unsafe: false,
+        });
+    knowledge
+        .risk_facts
+        .explicit_panic_sites
+        .push(ExplicitPanicSiteFact {
+            owner: RiskOwner::TraitImpl(drop_impl_id),
+            panic_kind: "panic!".into(),
+            source: CodeRef {
+                file: "src/query.rs".into(),
+                start_line: 65,
+                end_line: 65,
+            },
+        });
+
+    let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
+
+    assert!(models
+        .risk_surface_map
+        .rust_feature_risks
+        .iter()
+        .any(|risk| risk.feature == "conditional_impl"));
+    assert!(models
+        .risk_surface_map
+        .rust_feature_risks
+        .iter()
+        .any(|risk| risk.feature == "panic_in_drop"));
 }

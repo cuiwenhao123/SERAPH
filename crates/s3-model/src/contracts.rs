@@ -30,8 +30,16 @@ pub fn build_api_contracts(knowledge: &Knowledge) -> Vec<ApiContract> {
         .collect()
 }
 
-fn derive_preconditions(_api: &ApiInfo) -> Vec<String> {
-    Vec::new()
+fn derive_preconditions(api: &ApiInfo) -> Vec<String> {
+    let mut preconditions = split_non_empty_lines(&api.doc_sections.safety);
+
+    preconditions.extend(
+        split_non_empty_lines(&api.doc_sections.panics)
+            .into_iter()
+            .filter(|line| line.to_ascii_lowercase().contains("if ")),
+    );
+
+    dedup_vec(preconditions)
 }
 
 fn derive_postconditions(api: &ApiInfo) -> Vec<String> {
