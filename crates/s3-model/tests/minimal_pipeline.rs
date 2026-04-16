@@ -534,6 +534,38 @@ fn contract_builder_includes_owner_type_generic_constraints_for_assoc_functions(
 }
 
 #[test]
+fn contract_builder_separates_lifetime_params_from_synthesis_params() {
+    let mut knowledge = fixture_knowledge();
+    let from_reader = knowledge
+        .apis
+        .iter_mut()
+        .find(|api| api.canonical_path == "demo::io::from_reader")
+        .unwrap();
+    from_reader.generic_params = vec!["'a".into(), "R".into()];
+    from_reader.where_clauses = vec!["R: demo::io::Reader".into()];
+
+    let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
+    let constraints = models
+        .api_contracts
+        .iter()
+        .find(|contract| contract.path == "demo::io::from_reader")
+        .unwrap()
+        .generic_constraints
+        .as_ref()
+        .unwrap();
+
+    assert_eq!(constraints.lifetime_params, vec!["'a".to_string()]);
+    assert_eq!(
+        constraints
+            .params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect::<Vec<_>>(),
+        vec!["R".to_string()]
+    );
+}
+
+#[test]
 fn risk_builder_scores_unsafe_and_explicit_panic_evidence() {
     let mut knowledge = fixture_knowledge();
     let parser_start_api_id = {

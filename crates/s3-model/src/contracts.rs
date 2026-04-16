@@ -127,12 +127,16 @@ fn build_generic_constraints(
         return None;
     }
 
+    let (lifetime_params, type_params): (Vec<_>, Vec<_>) = generic_params
+        .into_iter()
+        .partition(|param| param.starts_with('\''));
+
     Some(GenericConstraints {
-        params: generic_params
+        params: type_params
             .iter()
             .map(|param| build_generic_param(param.as_str(), &where_clauses, trait_index))
             .collect(),
-        lifetime_params: vec![],
+        lifetime_params,
     })
 }
 
