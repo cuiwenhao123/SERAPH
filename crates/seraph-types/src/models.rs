@@ -1,4 +1,4 @@
-use crate::{ApiId, CapId, RiskLevel, TraitId, TypeId};
+use crate::{ApiId, CapId, ModuleId, RiskLevel, TraitId, TypeId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -15,17 +15,56 @@ pub struct FunctionalCapabilityGraph {
     pub capabilities: Vec<CapabilityNode>,
     pub capability_chains: Vec<Vec<CapId>>,
     pub capability_api_index: BTreeMap<CapId, Vec<ApiId>>,
-    pub stage1_summary: String,
+    pub stage1_summary: Stage1Summary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityNode {
     pub cap_id: CapId,
+    pub anchor_kind: CapabilityAnchorKind,
+    pub anchor_module_id: ModuleId,
+    pub anchor_type_id: Option<TypeId>,
+    pub role: CapabilityRole,
     pub name: String,
     pub description: String,
     pub api_ids: Vec<ApiId>,
     pub entry_api_ids: Vec<ApiId>,
     pub connects_to: Vec<CapId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityAnchorKind {
+    ModuleEntry,
+    Type,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityRole {
+    Construction,
+    Query,
+    Mutation,
+    Iteration,
+    Conversion,
+    Finalization,
+    Ffi,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stage1Summary {
+    pub capability_cards: Vec<Stage1CapabilityCard>,
+    pub recommended_chains: Vec<Vec<CapId>>,
+    pub one_liner: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stage1CapabilityCard {
+    pub cap_id: CapId,
+    pub name: String,
+    pub anchor_path: String,
+    pub role: CapabilityRole,
+    pub description: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

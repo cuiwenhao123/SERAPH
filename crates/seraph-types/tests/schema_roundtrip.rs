@@ -1,15 +1,17 @@
 use seraph_types::{
     ApiContract, ApiCoverageStatus, ApiId, ApiInfo, ApiKind, ApiRisk,
-    AssociatedTypeConstraint, BorrowedReturnFact, BugHuntingValue, CapId, CapabilityNode,
-    CodeRef, CoverageState, CrateMeta, DocSections, EnumVariantInfo, ExampleAnchor, ExampleId,
-    ExampleInfo, ExplicitPanicSiteFact, ExternAbiApiFact, FailedAttempt, ForbiddenTransition,
+    AssociatedTypeConstraint, BorrowedReturnFact, BugHuntingValue, CapId,
+    CapabilityAnchorKind, CapabilityNode, CapabilityRole, CodeRef, CoverageState, CrateMeta,
+    DocSections, EnumVariantInfo, ExampleAnchor, ExampleId, ExampleInfo,
+    ExplicitPanicSiteFact, ExternAbiApiFact, FailedAttempt, ForbiddenTransition,
     FunctionalCapabilityGraph, GenericConstraintParam, GenericConstraints, Knowledge, Models,
     ModuleId, ModuleInfo, NextPriorityItem, ReprKind, ReturnShape, ReturnShapeKind, RiskFacts,
     RiskLevel, RiskOwner, RiskSurfaceMap, RustFeatureRisk, ScenarioArtifact, ScenarioType,
-    SlmModelKind, StateLifecycleModel, StateTransition, SymbolId, SymbolInfo, SymbolKind,
-    TraitAssociatedConstBinding, TraitAssociatedConstDef, TraitAssociatedTypeBinding,
-    TraitAssociatedTypeDef, TraitExposureKind, TraitId, TraitImplId, TraitImplInfo, TraitInfo,
-    TraitOrigin, TypeId, TypeInfo, TypeKind, TypeLayoutFact, TypeSynthesisOverview, VariantKind,
+    SlmModelKind, Stage1CapabilityCard, Stage1Summary, StateLifecycleModel, StateTransition,
+    SymbolId, SymbolInfo, SymbolKind, TraitAssociatedConstBinding, TraitAssociatedConstDef,
+    TraitAssociatedTypeBinding, TraitAssociatedTypeDef, TraitExposureKind, TraitId, TraitImplId,
+    TraitImplInfo, TraitInfo, TraitOrigin, TypeId, TypeInfo, TypeKind, TypeLayoutFact,
+    TypeSynthesisOverview, VariantKind,
 };
 use std::collections::BTreeMap;
 
@@ -41,26 +43,152 @@ fn scenario_roundtrip_preserves_selected_capabilities() {
 }
 
 #[test]
+fn models_roundtrip_preserves_type_centered_fcg_fields() {
+    let models = Models {
+        fcg: FunctionalCapabilityGraph {
+            capabilities: vec![CapabilityNode {
+                cap_id: CapId::from("cap::demo::query::Document::query"),
+                anchor_kind: CapabilityAnchorKind::Type,
+                anchor_module_id: ModuleId::from("mod::demo::query"),
+                anchor_type_id: Some(TypeId::from("type::demo::query::Document")),
+                role: CapabilityRole::Query,
+                name: "Document 查询".into(),
+                description: "围绕 Document 的只读查询".into(),
+                api_ids: vec![ApiId::from("api::demo::query::Document::pointer")],
+                entry_api_ids: vec![],
+                connects_to: vec![],
+            }],
+            capability_chains: vec![],
+            capability_api_index: BTreeMap::from([(
+                CapId::from("cap::demo::query::Document::query"),
+                vec![ApiId::from("api::demo::query::Document::pointer")],
+            )]),
+            stage1_summary: Stage1Summary {
+                capability_cards: vec![Stage1CapabilityCard {
+                    cap_id: CapId::from("cap::demo::query::Document::query"),
+                    name: "Document 查询".into(),
+                    anchor_path: "demo::query::Document".into(),
+                    role: CapabilityRole::Query,
+                    description: "围绕 Document 的只读查询".into(),
+                }],
+                recommended_chains: vec![],
+                one_liner: "本库提供 1 项核心能力：Document 查询。".into(),
+            },
+        },
+        slm: vec![StateLifecycleModel {
+            type_id: TypeId::from("type::demo::Parser"),
+            path: "demo::Parser".into(),
+            model_kind: SlmModelKind::Full,
+            states: vec!["Constructed".into(), "Active".into(), "Closed".into()],
+            transitions: vec![StateTransition {
+                from: "Constructed".into(),
+                to: "Active".into(),
+                via_api_id: ApiId::from("api::demo::Parser::start"),
+                preconditions: vec![],
+            }],
+            fuzzable_states: vec!["Active".into()],
+            forbidden_transitions: vec![ForbiddenTransition {
+                from: "Closed".into(),
+                via_api_id: ApiId::from("api::demo::Parser::start"),
+                reason: "documented panic".into(),
+            }],
+        }],
+        api_contracts: vec![ApiContract {
+            api_id: ApiId::from("api::demo::parse"),
+            path: "demo::parse".into(),
+            preconditions: vec!["input must be valid".into()],
+            postconditions: vec!["returns Ok(T) or Err(E)".into()],
+            panic_conditions: vec![],
+            error_conditions: vec!["invalid bytes".into()],
+            safety: None,
+            side_effects: vec!["consumes input bytes".into()],
+            generic_constraints: Some(GenericConstraints {
+                params: vec![GenericConstraintParam {
+                    name: "R".into(),
+                    direct_bounds: vec!["Read".into()],
+                    full_bound_chain: vec!["Read".into()],
+                    associated_type_constraints: vec![AssociatedTypeConstraint {
+                        trait_id: Some(TraitId::from("trait::demo::Reader")),
+                        trait_path: "demo::Reader".into(),
+                        associated_type_name: "Item".into(),
+                        bounds: vec!["Debug".into()],
+                    }],
+                    is_unsafe_trait: false,
+                    strategy: "C".into(),
+                    bug_hunting_value: BugHuntingValue::High,
+                    synthesis_guidance: "custom reader with short-read".into(),
+                }],
+            }),
+        }],
+        risk_surface_map: RiskSurfaceMap {
+            api_risks: vec![ApiRisk {
+                api_id: ApiId::from("api::demo::parse"),
+                risk_level: RiskLevel::High,
+                reasons: vec!["extern input".into()],
+                recommended_fuzz_strategy: "raw bytes".into(),
+            }],
+            type_synthesis_overview: TypeSynthesisOverview {
+                generic_api_count: 1,
+                strategy_distribution: BTreeMap::from([("C".into(), 1)]),
+                one_liner: "1 个泛型 API 适合自定义类型合成".into(),
+            },
+            rust_feature_risks: vec![RustFeatureRisk {
+                feature: "borrowed_return".into(),
+                apis_affected: vec![ApiId::from("api::demo::parse")],
+                risk: "borrow ties output to input".into(),
+            }],
+        },
+    };
+
+    let json = serde_json::to_string_pretty(&models).unwrap();
+    let decoded: Models = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(decoded.fcg.capabilities[0].role, CapabilityRole::Query);
+    assert_eq!(
+        decoded.fcg.stage1_summary.capability_cards[0].anchor_path,
+        "demo::query::Document"
+    );
+    assert_eq!(decoded.slm[0].model_kind, SlmModelKind::Full);
+}
+
+#[test]
 fn models_roundtrip_preserves_phase2_semantic_fields() {
     let models = Models {
         fcg: FunctionalCapabilityGraph {
             capabilities: vec![CapabilityNode {
-                cap_id: CapId::from("cap::demo::parse"),
+                cap_id: CapId::from("cap::demo::module_entry::construction"),
+                anchor_kind: CapabilityAnchorKind::ModuleEntry,
+                anchor_module_id: ModuleId::from("mod::demo"),
+                anchor_type_id: None,
+                role: CapabilityRole::Construction,
                 name: "parse".into(),
                 description: "parse input".into(),
                 api_ids: vec![ApiId::from("api::demo::parse")],
                 entry_api_ids: vec![ApiId::from("api::demo::parse")],
-                connects_to: vec![CapId::from("cap::demo::query")],
+                connects_to: vec![CapId::from("cap::demo::Document::query")],
             }],
             capability_chains: vec![vec![
-                CapId::from("cap::demo::parse"),
-                CapId::from("cap::demo::query"),
+                CapId::from("cap::demo::module_entry::construction"),
+                CapId::from("cap::demo::Document::query"),
             ]],
             capability_api_index: BTreeMap::from([(
-                CapId::from("cap::demo::parse"),
+                CapId::from("cap::demo::module_entry::construction"),
                 vec![ApiId::from("api::demo::parse")],
             )]),
-            stage1_summary: "本库提供 1 项核心能力：parse（1 个 API）".into(),
+            stage1_summary: Stage1Summary {
+                capability_cards: vec![Stage1CapabilityCard {
+                    cap_id: CapId::from("cap::demo::module_entry::construction"),
+                    name: "parse".into(),
+                    anchor_path: "demo".into(),
+                    role: CapabilityRole::Construction,
+                    description: "parse input".into(),
+                }],
+                recommended_chains: vec![vec![
+                    CapId::from("cap::demo::module_entry::construction"),
+                    CapId::from("cap::demo::Document::query"),
+                ]],
+                one_liner: "本库提供 1 项核心能力：parse（1 个 API）".into(),
+            },
         },
         slm: vec![StateLifecycleModel {
             type_id: TypeId::from("type::demo::Parser"),
