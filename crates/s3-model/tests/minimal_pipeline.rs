@@ -593,9 +593,11 @@ fn risk_builder_emits_repr_packed_risk_for_affected_owner_type_apis() {
         .find(|risk| risk.feature == "repr_packed")
         .unwrap();
 
-    assert!(repr_risk
-        .apis_affected
-        .contains(&seraph_types::ApiId::from("api::demo::query::Parser::new")));
+    assert!(repr_risk.apis_affected.is_empty());
+    assert_eq!(
+        repr_risk.types_affected,
+        vec![seraph_types::TypeId::from("type::demo::query::Parser")]
+    );
 }
 
 #[test]
@@ -664,14 +666,146 @@ fn risk_surface_reports_conditional_impl_and_panic_in_drop() {
 
     let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
 
-    assert!(models
+    let conditional_impl = models
         .risk_surface_map
         .rust_feature_risks
         .iter()
-        .any(|risk| risk.feature == "conditional_impl"));
-    assert!(models
+        .find(|risk| risk.feature == "conditional_impl")
+        .unwrap();
+    assert!(conditional_impl.apis_affected.is_empty());
+    assert_eq!(
+        conditional_impl.types_affected,
+        vec![seraph_types::TypeId::from("type::demo::query::Parser")]
+    );
+
+    let panic_in_drop = models
         .risk_surface_map
         .rust_feature_risks
         .iter()
-        .any(|risk| risk.feature == "panic_in_drop"));
+        .find(|risk| risk.feature == "panic_in_drop")
+        .unwrap();
+    assert!(panic_in_drop.apis_affected.is_empty());
+    assert_eq!(
+        panic_in_drop.types_affected,
+        vec![seraph_types::TypeId::from("type::demo::query::Parser")]
+    );
+}
+
+#[test]
+fn risk_surface_keeps_type_level_risks_without_api_expansion() {
+    let mut knowledge = fixture_knowledge();
+
+    knowledge.types.push(seraph_types::TypeInfo {
+        type_id: seraph_types::TypeId::from("type::demo::drop::Bomb"),
+        name: "Bomb".into(),
+        canonical_path: "demo::drop::Bomb".into(),
+        public_paths: vec!["demo::drop::Bomb".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::drop"),
+        code_ref: CodeRef {
+            file: "src/drop.rs".into(),
+            start_line: 1,
+            end_line: 8,
+        },
+        docs: "Panicking drop bomb.".into(),
+        doc_sections: DocSections::default(),
+        kind: seraph_types::TypeKind::Struct,
+        generic_params: vec![],
+        where_clauses: vec![],
+        is_non_exhaustive: false,
+        fields: vec![],
+        variants: vec![],
+        has_hidden_fields: false,
+        has_hidden_variants: false,
+    });
+
+    let bomb_drop_impl_id: seraph_types::TraitImplId =
+        "trait_impl::core::ops::drop::Drop::for::demo::drop::Bomb".into();
+    knowledge
+        .trait_impl_registry
+        .push(seraph_types::TraitImplInfo {
+            trait_impl_id: bomb_drop_impl_id.clone(),
+            target_type_id: seraph_types::TypeId::from("type::demo::drop::Bomb"),
+            trait_ref_text: "core::ops::drop::Drop".into(),
+            for_type_text: "demo::drop::Bomb".into(),
+            trait_id: seraph_types::TraitId::from("trait::core::ops::drop::Drop"),
+            trait_name: "Drop".into(),
+            trait_canonical_path: "core::ops::drop::Drop".into(),
+            trait_origin: seraph_types::TraitOrigin::External,
+            source: CodeRef {
+                file: "src/drop.rs".into(),
+                start_line: 10,
+                end_line: 14,
+            },
+            associated_type_bindings: vec![],
+            associated_const_bindings: vec![],
+            where_clauses: vec![],
+            cfg_attrs: vec![],
+            is_unsafe: false,
+        });
+
+    knowledge
+        .trait_impl_registry
+        .push(seraph_types::TraitImplInfo {
+            trait_impl_id: "trait_impl::demo::Feature::for::demo::query::Parser".into(),
+            target_type_id: seraph_types::TypeId::from("type::demo::query::Parser"),
+            trait_ref_text: "demo::Feature".into(),
+            for_type_text: "demo::query::Parser".into(),
+            trait_id: seraph_types::TraitId::from("trait::demo::Feature"),
+            trait_name: "Feature".into(),
+            trait_canonical_path: "demo::Feature".into(),
+            trait_origin: seraph_types::TraitOrigin::Local,
+            source: CodeRef {
+                file: "src/query.rs".into(),
+                start_line: 40,
+                end_line: 40,
+            },
+            associated_type_bindings: vec![],
+            associated_const_bindings: vec![],
+            where_clauses: vec![],
+            cfg_attrs: vec!["#[cfg(feature = \"nightly\")]".into()],
+            is_unsafe: false,
+        });
+
+    knowledge
+        .risk_facts
+        .drop_impl_types
+        .push(seraph_types::TypeId::from("type::demo::drop::Bomb"));
+    knowledge
+        .risk_facts
+        .explicit_panic_sites
+        .push(ExplicitPanicSiteFact {
+            owner: RiskOwner::TraitImpl(bomb_drop_impl_id),
+            panic_kind: "panic!".into(),
+            source: CodeRef {
+                file: "src/drop.rs".into(),
+                start_line: 12,
+                end_line: 12,
+            },
+        });
+
+    let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
+
+    let panic_in_drop = models
+        .risk_surface_map
+        .rust_feature_risks
+        .iter()
+        .find(|risk| risk.feature == "panic_in_drop")
+        .unwrap();
+    assert!(panic_in_drop.apis_affected.is_empty());
+    assert_eq!(
+        panic_in_drop.types_affected,
+        vec![seraph_types::TypeId::from("type::demo::drop::Bomb")]
+    );
+
+    let conditional_impl = models
+        .risk_surface_map
+        .rust_feature_risks
+        .iter()
+        .find(|risk| risk.feature == "conditional_impl")
+        .unwrap();
+    assert!(conditional_impl.apis_affected.is_empty());
+    assert_eq!(
+        conditional_impl.types_affected,
+        vec![seraph_types::TypeId::from("type::demo::query::Parser")]
+    );
 }

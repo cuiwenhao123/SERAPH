@@ -163,6 +163,7 @@ fn build_rust_feature_risks(knowledge: &Knowledge) -> Vec<RustFeatureRisk> {
         risks.push(RustFeatureRisk {
             feature: "extern_abi".to_owned(),
             apis_affected: extern_abi_apis,
+            types_affected: vec![],
             risk: "public API crosses a non-Rust ABI boundary".to_owned(),
         });
     }
@@ -177,6 +178,7 @@ fn build_rust_feature_risks(knowledge: &Knowledge) -> Vec<RustFeatureRisk> {
         risks.push(RustFeatureRisk {
             feature: "borrowed_return".to_owned(),
             apis_affected: borrowed_return_apis,
+            types_affected: vec![],
             risk: "returned value borrows from self or input arguments".to_owned(),
         });
     }
@@ -192,42 +194,29 @@ fn build_rust_feature_risks(knowledge: &Knowledge) -> Vec<RustFeatureRisk> {
         })
         .map(|fact| fact.type_id.clone())
         .collect::<BTreeSet<TypeId>>();
-    let repr_packed_apis = knowledge
-        .apis
-        .iter()
-        .filter_map(|api| {
-            api.owner_type_id
-                .as_ref()
-                .filter(|type_id| packed_type_ids.contains(*type_id))
-                .map(|_| api.api_id.clone())
-        })
-        .collect::<Vec<_>>();
-    if !repr_packed_apis.is_empty() {
+    let repr_packed_types = packed_type_ids.into_iter().collect::<Vec<_>>();
+    if !repr_packed_types.is_empty() {
         risks.push(RustFeatureRisk {
             feature: "repr_packed".to_owned(),
-            apis_affected: repr_packed_apis,
+            apis_affected: vec![],
+            types_affected: repr_packed_types,
             risk: "packed repr can make references invalid or surprising".to_owned(),
         });
     }
 
-    let conditional_impl_apis = knowledge
+    let conditional_impl_types = knowledge
         .trait_impl_registry
         .iter()
         .filter(|impl_info| !impl_info.cfg_attrs.is_empty())
-        .flat_map(|impl_info| {
-            knowledge
-                .apis
-                .iter()
-                .filter(move |api| api.owner_type_id.as_ref() == Some(&impl_info.target_type_id))
-                .map(|api| api.api_id.clone())
-        })
-        .collect::<BTreeSet<ApiId>>()
+        .map(|impl_info| impl_info.target_type_id.clone())
+        .collect::<BTreeSet<TypeId>>()
         .into_iter()
         .collect::<Vec<_>>();
-    if !conditional_impl_apis.is_empty() {
+    if !conditional_impl_types.is_empty() {
         risks.push(RustFeatureRisk {
             feature: "conditional_impl".to_owned(),
-            apis_affected: conditional_impl_apis,
+            apis_affected: vec![],
+            types_affected: conditional_impl_types,
             risk: "public surface depends on cfg-gated impl availability".to_owned(),
         });
     }
@@ -243,22 +232,16 @@ fn build_rust_feature_risks(knowledge: &Knowledge) -> Vec<RustFeatureRisk> {
         })
         .map(|impl_info| impl_info.target_type_id.clone())
         .collect::<BTreeSet<TypeId>>();
-    let panic_in_drop_apis = knowledge
-        .apis
-        .iter()
-        .filter_map(|api| {
-            api.owner_type_id
-                .as_ref()
-                .filter(|type_id| panic_in_drop_type_ids.contains(*type_id))
-                .map(|_| api.api_id.clone())
-        })
-        .collect::<BTreeSet<ApiId>>()
+    let panic_in_drop_types = panic_in_drop_type_ids
+        .into_iter()
+        .collect::<BTreeSet<TypeId>>()
         .into_iter()
         .collect::<Vec<_>>();
-    if !panic_in_drop_apis.is_empty() {
+    if !panic_in_drop_types.is_empty() {
         risks.push(RustFeatureRisk {
             feature: "panic_in_drop".to_owned(),
-            apis_affected: panic_in_drop_apis,
+            apis_affected: vec![],
+            types_affected: panic_in_drop_types,
             risk: "Drop impl can panic during destruction".to_owned(),
         });
     }

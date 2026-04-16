@@ -132,6 +132,7 @@ fn build_generic_constraints(
             .iter()
             .map(|param| build_generic_param(param.as_str(), &where_clauses, trait_index))
             .collect(),
+        lifetime_params: vec![],
     })
 }
 
