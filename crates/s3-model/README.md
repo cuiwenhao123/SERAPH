@@ -21,16 +21,22 @@
   - type-centered capability graph keyed by `cap_id`
   - each capability is anchored to either a public type or a synthetic module entry
   - capability nodes carry a semantic `role` such as `construction`, `query`, `mutation`, or `ffi`
-  - `stage1_summary` is structured data, not a single prose string
+  - cross-anchor edges are conservative and biased toward real handoff flows
+  - `stage1_summary.one_liner` is a short digest, while `capability_cards` remains the detailed view
 - `slm`
   - emits `simplified` or `full` lifecycle models for stateful public types only
-  - keeps forbidden transitions evidence-backed from documented panic text
+  - emits `full` only when a lifecycle model has useful nontrivial states or forbidden transitions
+  - downgrades weak constructor-only models to `simplified`
   - only introduces `Error` when a recovery-style API is present
 - `api_contracts`
   - keeps `preconditions`, `panic_conditions`, `error_conditions`, `side_effects`, and `generic_constraints`
   - preconditions are derived only from documented `# Safety` text and panic conditions that read like state guards
+  - `generic_constraints.params` contains synthesis-relevant type params only
+  - `generic_constraints.lifetime_params` keeps explicit borrow facts separate
 - `risk_surface_map`
   - aggregates per-API risk levels plus crate-wide Rust feature risks
+  - `api_risks` stays API-centric
+  - `rust_feature_risks` can now report either `apis_affected` or `types_affected`
   - currently covers features such as `extern_abi`, `borrowed_return`, `repr_packed`, `conditional_impl`, and `panic_in_drop`
 
 ## Deterministic guarantees

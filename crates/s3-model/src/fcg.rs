@@ -607,6 +607,7 @@ fn build_stage1_summary(
     capabilities: &[CapabilityDraft],
     chains: &[Vec<CapId>],
 ) -> Stage1Summary {
+    let recommended_chains = select_recommended_chains(capabilities, chains);
     let capability_cards = capabilities
         .iter()
         .map(|cap| Stage1CapabilityCard {
@@ -618,13 +619,32 @@ fn build_stage1_summary(
         })
         .collect::<Vec<_>>();
 
-    let one_liner = summarize_capabilities(capabilities, chains);
+    let one_liner = summarize_capabilities(capabilities, &recommended_chains);
 
     Stage1Summary {
         capability_cards,
-        recommended_chains: chains.to_vec(),
+        recommended_chains,
         one_liner,
     }
+}
+
+fn select_recommended_chains(
+    capabilities: &[CapabilityDraft],
+    chains: &[Vec<CapId>],
+) -> Vec<Vec<CapId>> {
+    let roles = capabilities
+        .iter()
+        .map(|cap| (cap.cap_id.clone(), cap.role))
+        .collect::<BTreeMap<_, _>>();
+
+    chains
+        .iter()
+        .filter(|chain| {
+            chain.first().and_then(|cap_id| roles.get(cap_id)).copied()
+                == Some(CapabilityRole::Construction)
+        })
+        .cloned()
+        .collect()
 }
 
 fn summarize_capabilities(capabilities: &[CapabilityDraft], chains: &[Vec<CapId>]) -> String {

@@ -190,7 +190,7 @@
           "cap::demo::query::Parser::mutation"
         ]
       ],
-      "one_liner": "本库提供 6 项核心能力：io 入口构造、io 入口FFI、Document 查询、Parser 构造、Parser 终结、Parser 修改。"
+      "one_liner": "6项能力：Parser 构造、io 入口构造、io 入口FFI等。"
     }
   },
   "slm": [
@@ -277,7 +277,8 @@
             "bug_hunting_value": "HIGH",
             "synthesis_guidance": "custom reader with short-read"
           }
-        ]
+        ],
+        "lifetime_params": []
       }
     },
     {
@@ -423,6 +424,7 @@
         "apis_affected": [
           "api::demo::io::ffi_probe"
         ],
+        "types_affected": [],
         "risk": "public API crosses a non-Rust ABI boundary"
       },
       {
@@ -430,6 +432,7 @@
         "apis_affected": [
           "api::demo::query::Document::pointer"
         ],
+        "types_affected": [],
         "risk": "returned value borrows from self or input arguments"
       }
     ]
