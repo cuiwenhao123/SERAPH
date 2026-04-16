@@ -125,7 +125,11 @@ pub struct ApiContract {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GenericConstraints {
+    // Type parameters that participate in trait-bound analysis and synthesis.
     pub params: Vec<GenericConstraintParam>,
+    // Explicit lifetime names kept as facts, separate from synthesis strategy.
+    #[serde(default)]
+    pub lifetime_params: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,6 +197,9 @@ pub struct TypeSynthesisOverview {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustFeatureRisk {
     pub feature: String,
+    #[serde(default)]
     pub apis_affected: Vec<ApiId>,
+    #[serde(default)]
+    pub types_affected: Vec<TypeId>,
     pub risk: String,
 }

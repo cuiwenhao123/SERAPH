@@ -118,6 +118,7 @@ fn models_roundtrip_preserves_type_centered_fcg_fields() {
                     bug_hunting_value: BugHuntingValue::High,
                     synthesis_guidance: "custom reader with short-read".into(),
                 }],
+                lifetime_params: vec!["'a".into()],
             }),
         }],
         risk_surface_map: RiskSurfaceMap {
@@ -135,6 +136,7 @@ fn models_roundtrip_preserves_type_centered_fcg_fields() {
             rust_feature_risks: vec![RustFeatureRisk {
                 feature: "borrowed_return".into(),
                 apis_affected: vec![ApiId::from("api::demo::parse")],
+                types_affected: vec![TypeId::from("type::demo::Parser")],
                 risk: "borrow ties output to input".into(),
             }],
         },
@@ -233,6 +235,7 @@ fn models_roundtrip_preserves_phase2_semantic_fields() {
                     bug_hunting_value: BugHuntingValue::High,
                     synthesis_guidance: "custom reader with short-read".into(),
                 }],
+                lifetime_params: vec!["'a".into()],
             }),
         }],
         risk_surface_map: RiskSurfaceMap {
@@ -250,6 +253,7 @@ fn models_roundtrip_preserves_phase2_semantic_fields() {
             rust_feature_risks: vec![RustFeatureRisk {
                 feature: "borrowed_return".into(),
                 apis_affected: vec![ApiId::from("api::demo::parse")],
+                types_affected: vec![TypeId::from("type::demo::Parser")],
                 risk: "borrow ties output to input".into(),
             }],
         },
@@ -267,6 +271,18 @@ fn models_roundtrip_preserves_phase2_semantic_fields() {
             .params[0]
             .bug_hunting_value,
         BugHuntingValue::High
+    );
+    assert_eq!(
+        decoded.api_contracts[0]
+            .generic_constraints
+            .as_ref()
+            .unwrap()
+            .lifetime_params,
+        vec!["'a".to_string()]
+    );
+    assert_eq!(
+        decoded.risk_surface_map.rust_feature_risks[0].types_affected,
+        vec![TypeId::from("type::demo::Parser")]
     );
     assert_eq!(decoded.api_contracts[0].side_effects, vec!["consumes input bytes"]);
 }
