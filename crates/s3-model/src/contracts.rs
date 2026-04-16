@@ -1,27 +1,37 @@
 use seraph_types::{
     ApiContract, ApiInfo, AssociatedTypeConstraint, BugHuntingValue, GenericConstraintParam,
-    GenericConstraints, Knowledge, TraitId, TraitInfo,
+    GenericConstraints, Knowledge, TraitId, TraitInfo, TypeId, TypeInfo,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 pub fn build_api_contracts(knowledge: &Knowledge) -> Vec<ApiContract> {
     let trait_index = TraitIndex::new(knowledge);
+    let type_index = TypeIndex::new(knowledge);
 
     knowledge
         .apis
         .iter()
-        .map(|api| ApiContract {
-            api_id: api.api_id.clone(),
-            path: api.canonical_path.clone(),
-            preconditions: split_non_empty_lines(&api.doc_sections.panics),
-            postconditions: derive_postconditions(api),
-            panic_conditions: split_non_empty_lines(&api.doc_sections.panics),
-            error_conditions: split_non_empty_lines(&api.doc_sections.errors),
-            safety: non_empty(api.doc_sections.safety.trim()),
-            side_effects: derive_side_effects(knowledge, api, &trait_index),
-            generic_constraints: build_generic_constraints(api, &trait_index),
+        .map(|api| {
+            let generic_constraints =
+                build_generic_constraints(knowledge, api, &trait_index, &type_index);
+
+            ApiContract {
+                api_id: api.api_id.clone(),
+                path: api.canonical_path.clone(),
+                preconditions: derive_preconditions(api),
+                postconditions: derive_postconditions(api),
+                panic_conditions: split_non_empty_lines(&api.doc_sections.panics),
+                error_conditions: split_non_empty_lines(&api.doc_sections.errors),
+                safety: non_empty(api.doc_sections.safety.trim()),
+                side_effects: derive_side_effects(knowledge, api, generic_constraints.as_ref()),
+                generic_constraints,
+            }
         })
         .collect()
+}
+
+fn derive_preconditions(_api: &ApiInfo) -> Vec<String> {
+    Vec::new()
 }
 
 fn derive_postconditions(api: &ApiInfo) -> Vec<String> {
@@ -35,19 +45,17 @@ fn derive_postconditions(api: &ApiInfo) -> Vec<String> {
 fn derive_side_effects(
     knowledge: &Knowledge,
     api: &ApiInfo,
-    trait_index: &TraitIndex<'_>,
+    generic_constraints: Option<&GenericConstraints>,
 ) -> Vec<String> {
     let mut side_effects = Vec::new();
 
-    match api.receiver.as_deref() {
-        Some("&mut self") => side_effects.push("mutates receiver".to_owned()),
-        Some("self") => side_effects.push("consumes receiver".to_owned()),
-        _ => {}
+    match classify_receiver(api.receiver.as_deref()) {
+        ReceiverKind::Mutates => side_effects.push("mutates receiver".to_owned()),
+        ReceiverKind::Consumes => side_effects.push("consumes receiver".to_owned()),
+        ReceiverKind::Other => {}
     }
 
-    let generic_constraints = build_generic_constraints(api, trait_index);
     if generic_constraints
-        .as_ref()
         .map(|constraints| {
             constraints.params.iter().any(|param| {
                 param
@@ -74,36 +82,92 @@ fn derive_side_effects(
     dedup_vec(side_effects)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReceiverKind {
+    Mutates,
+    Consumes,
+    Other,
+}
+
+fn classify_receiver(receiver: Option<&str>) -> ReceiverKind {
+    let Some(receiver) = receiver else {
+        return ReceiverKind::Other;
+    };
+    let normalized = receiver
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    if normalized == "self" {
+        ReceiverKind::Consumes
+    } else if normalized.contains("mutself") {
+        ReceiverKind::Mutates
+    } else {
+        ReceiverKind::Other
+    }
+}
+
 fn build_generic_constraints(
+    knowledge: &Knowledge,
     api: &ApiInfo,
     trait_index: &TraitIndex<'_>,
+    type_index: &TypeIndex<'_>,
 ) -> Option<GenericConstraints> {
-    if api.generic_params.is_empty() {
+    let (generic_params, where_clauses) = collect_generic_context(knowledge, api, type_index);
+    if generic_params.is_empty() {
         return None;
     }
 
     Some(GenericConstraints {
-        params: api
-            .generic_params
+        params: generic_params
             .iter()
-            .map(|param| build_generic_param(param.as_str(), api, trait_index))
+            .map(|param| build_generic_param(param.as_str(), &where_clauses, trait_index))
             .collect(),
     })
 }
 
+fn collect_generic_context(
+    knowledge: &Knowledge,
+    api: &ApiInfo,
+    type_index: &TypeIndex<'_>,
+) -> (Vec<String>, Vec<String>) {
+    let mut generic_params = Vec::new();
+    let mut where_clauses = Vec::new();
+
+    if let Some(owner_type_id) = &api.owner_type_id {
+        if let Some(owner_type) = type_index.resolve(owner_type_id) {
+            generic_params.extend(owner_type.generic_params.iter().cloned());
+            where_clauses.extend(owner_type.where_clauses.iter().cloned());
+        } else if let Some(owner_type) = knowledge
+            .types
+            .iter()
+            .find(|ty| &ty.type_id == owner_type_id)
+        {
+            generic_params.extend(owner_type.generic_params.iter().cloned());
+            where_clauses.extend(owner_type.where_clauses.iter().cloned());
+        }
+    }
+
+    generic_params.extend(api.generic_params.iter().cloned());
+    where_clauses.extend(api.where_clauses.iter().cloned());
+
+    (dedup_vec(generic_params), dedup_vec(where_clauses))
+}
+
 fn build_generic_param(
     param: &str,
-    api: &ApiInfo,
+    where_clauses: &[String],
     trait_index: &TraitIndex<'_>,
 ) -> GenericConstraintParam {
-    let direct_bounds = api
-        .where_clauses
+    let direct_bounds = where_clauses
         .iter()
         .filter_map(|clause| parse_direct_bounds(param, clause))
         .flatten()
         .collect::<Vec<_>>();
     let full_bound_chain = expand_full_bound_chain(&direct_bounds, trait_index);
-    let associated_type_constraints = collect_associated_type_constraints(&direct_bounds, trait_index);
+    let associated_type_constraints =
+        collect_associated_type_constraints(&direct_bounds, trait_index);
     let is_unsafe_trait = full_bound_chain.iter().any(|bound| {
         trait_index
             .resolve(bound.as_str())
@@ -285,9 +349,30 @@ impl<'a> TraitIndex<'a> {
     }
 
     fn resolve(&self, bound: &str) -> Option<&'a TraitInfo> {
-        self.by_path
-            .get(bound)
-            .copied()
-            .or_else(|| self.by_name.get(bound.rsplit("::").next().unwrap_or(bound)).copied())
+        self.by_path.get(bound).copied().or_else(|| {
+            self.by_name
+                .get(bound.rsplit("::").next().unwrap_or(bound))
+                .copied()
+        })
+    }
+}
+
+struct TypeIndex<'a> {
+    by_id: BTreeMap<&'a TypeId, &'a TypeInfo>,
+}
+
+impl<'a> TypeIndex<'a> {
+    fn new(knowledge: &'a Knowledge) -> Self {
+        let mut by_id = BTreeMap::new();
+
+        for type_info in &knowledge.types {
+            by_id.insert(&type_info.type_id, type_info);
+        }
+
+        Self { by_id }
+    }
+
+    fn resolve(&self, type_id: &TypeId) -> Option<&'a TypeInfo> {
+        self.by_id.get(type_id).copied()
     }
 }

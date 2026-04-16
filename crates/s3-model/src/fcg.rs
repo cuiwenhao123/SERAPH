@@ -13,7 +13,10 @@ pub fn build_fcg(knowledge: &Knowledge) -> FunctionalCapabilityGraph {
         .filter_map(|module| {
             let apis = api_index.get(&module.module_id)?;
             let cap_id = capability_id_for_module(&module.canonical_path);
-            let api_ids = apis.iter().map(|api| api.api_id.clone()).collect::<Vec<_>>();
+            let api_ids = apis
+                .iter()
+                .map(|api| api.api_id.clone())
+                .collect::<Vec<_>>();
             let entry_api_ids = apis
                 .iter()
                 .filter(|api| {
@@ -52,12 +55,8 @@ pub fn build_fcg(knowledge: &Knowledge) -> FunctionalCapabilityGraph {
     for capability in &mut capabilities {
         let module_id = ModuleId(capability.cap_id.as_str().replacen("cap::", "mod::", 1));
         if let Some(apis) = api_index.get(&module_id) {
-            capability.connects_to = collect_connects_to(
-                apis,
-                &module_id,
-                &type_module_index,
-                &cap_by_module,
-            );
+            capability.connects_to =
+                collect_connects_to(apis, &module_id, &type_module_index, &cap_by_module);
         }
     }
 
@@ -87,15 +86,44 @@ fn group_apis_by_module<'a>(knowledge: &'a Knowledge) -> BTreeMap<ModuleId, Vec<
     grouped
 }
 
-fn build_type_module_index(knowledge: &Knowledge) -> BTreeMap<String, ModuleId> {
-    let mut index = BTreeMap::new();
+struct TypeModuleIndex {
+    exact_paths: BTreeMap<String, ModuleId>,
+    unique_short_names: BTreeMap<String, ModuleId>,
+}
+
+fn build_type_module_index(knowledge: &Knowledge) -> TypeModuleIndex {
+    let mut exact_paths = BTreeMap::new();
+    let mut short_name_candidates = BTreeMap::<String, Option<ModuleId>>::new();
+
     for ty in &knowledge.types {
-        index.insert(ty.canonical_path.clone(), ty.public_anchor_module_id.clone());
+        exact_paths.insert(
+            ty.canonical_path.clone(),
+            ty.public_anchor_module_id.clone(),
+        );
+        record_unique_short_name(
+            &mut short_name_candidates,
+            short_name(ty.canonical_path.as_str()),
+            ty.public_anchor_module_id.clone(),
+        );
         for public_path in &ty.public_paths {
-            index.insert(public_path.clone(), ty.public_anchor_module_id.clone());
+            exact_paths.insert(public_path.clone(), ty.public_anchor_module_id.clone());
+            record_unique_short_name(
+                &mut short_name_candidates,
+                short_name(public_path.as_str()),
+                ty.public_anchor_module_id.clone(),
+            );
         }
     }
-    index
+
+    let unique_short_names = short_name_candidates
+        .into_iter()
+        .filter_map(|(name, module_id)| module_id.map(|module_id| (name, module_id)))
+        .collect();
+
+    TypeModuleIndex {
+        exact_paths,
+        unique_short_names,
+    }
 }
 
 fn capability_id_for_module(module_path: &str) -> CapId {
@@ -114,7 +142,7 @@ fn pick_capability_name(summary: &str, fallback: &str) -> String {
 fn collect_connects_to(
     apis: &[&ApiInfo],
     source_module_id: &ModuleId,
-    type_module_index: &BTreeMap<String, ModuleId>,
+    type_module_index: &TypeModuleIndex,
     cap_by_module: &BTreeMap<ModuleId, CapId>,
 ) -> Vec<CapId> {
     let mut targets = BTreeSet::new();
@@ -129,19 +157,121 @@ fn collect_connects_to(
         }
 
         for candidate_type in candidate_types {
-            let Some(target_module_id) = type_module_index.get(&candidate_type) else {
+            let Some(target_module_id) = resolve_type_module(&candidate_type, type_module_index)
+            else {
                 continue;
             };
-            if target_module_id == source_module_id {
+            if &target_module_id == source_module_id {
                 continue;
             }
-            if let Some(cap_id) = cap_by_module.get(target_module_id) {
+            if let Some(cap_id) = cap_by_module.get(&target_module_id) {
                 targets.insert(cap_id.clone());
             }
         }
     }
 
     targets.into_iter().collect()
+}
+
+fn resolve_type_module(
+    candidate_type: &str,
+    type_module_index: &TypeModuleIndex,
+) -> Option<ModuleId> {
+    if let Some(module_id) = type_module_index.exact_paths.get(candidate_type) {
+        return Some(module_id.clone());
+    }
+
+    let normalized = normalize_type_text(candidate_type);
+    if normalized.is_empty() {
+        return None;
+    }
+
+    if let Some(module_id) = type_module_index.exact_paths.get(&normalized) {
+        return Some(module_id.clone());
+    }
+
+    type_module_index
+        .unique_short_names
+        .get(short_name(normalized.as_str()))
+        .cloned()
+}
+
+fn normalize_type_text(candidate_type: &str) -> String {
+    let mut text = candidate_type.trim().to_owned();
+
+    loop {
+        let trimmed = text.trim_start();
+        if let Some(rest) = trimmed.strip_prefix('&') {
+            text = rest.trim_start().to_owned();
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("*const ") {
+            text = rest.trim_start().to_owned();
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("*mut ") {
+            text = rest.trim_start().to_owned();
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("dyn ") {
+            text = rest.trim_start().to_owned();
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("impl ") {
+            text = rest.trim_start().to_owned();
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("mut ") {
+            text = rest.trim_start().to_owned();
+            continue;
+        }
+        if trimmed.starts_with('\'') {
+            if let Some((_, rest)) = trimmed.split_once(' ') {
+                text = rest.trim_start().to_owned();
+                continue;
+            }
+        }
+        text = trimmed.to_owned();
+        break;
+    }
+
+    strip_generic_arguments(text.as_str()).trim().to_owned()
+}
+
+fn strip_generic_arguments(text: &str) -> String {
+    let mut result = String::new();
+    let mut depth = 0usize;
+
+    for ch in text.chars() {
+        match ch {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => result.push(ch),
+            _ => {}
+        }
+    }
+
+    result
+}
+
+fn short_name(path: &str) -> &str {
+    path.rsplit("::").next().unwrap_or(path)
+}
+
+fn record_unique_short_name(
+    candidates: &mut BTreeMap<String, Option<ModuleId>>,
+    short_name: &str,
+    module_id: ModuleId,
+) {
+    match candidates.get(short_name) {
+        None => {
+            candidates.insert(short_name.to_owned(), Some(module_id));
+        }
+        Some(Some(existing_module_id)) if *existing_module_id == module_id => {}
+        Some(_) => {
+            candidates.insert(short_name.to_owned(), None);
+        }
+    }
 }
 
 fn derive_capability_chains(capabilities: &[CapabilityNode]) -> Vec<Vec<CapId>> {
@@ -159,7 +289,13 @@ fn derive_capability_chains(capabilities: &[CapabilityNode]) -> Vec<Vec<CapId>> 
 
     let start_nodes = indegree
         .iter()
-        .filter_map(|(cap_id, degree)| if *degree == 0 { Some(cap_id.clone()) } else { None })
+        .filter_map(|(cap_id, degree)| {
+            if *degree == 0 {
+                Some(cap_id.clone())
+            } else {
+                None
+            }
+        })
         .collect::<Vec<_>>();
     let mut chains = BTreeSet::new();
 

@@ -27,7 +27,8 @@
    - trait 使用 `trait_id`
    - 所有阶段间 join 均基于 ID，而不是名字字符串。
 
-5. **新增 `capability_api_index`**
+5. **将 FCG 收敛为“类型中心 capability + 稳定映射索引”**
+   - capability 不再默认等同于模块，而是以“类型 / 模块入口 + 角色”作为节点锚点。
    - 在 Phase 2 的 FCG 中显式建立 capability→API 的稳定映射。
    - Stage 1.5 不再只依赖“API 名称语义猜测”。
 
@@ -241,12 +242,9 @@ Phase 1 只提取“事实”，不做语义推理。核心字段包括：
    - `repr(...)`
    - builder / constructor / default
 
-3. trait 注册表
-   - required / provided methods
-   - associated types / constants
-   - supertraits
-   - known implementors
-   - unsafe trait 标记
+3. trait 定义与 impl surface
+   - `trait_registry`：required / provided methods、associated types / constants、supertraits、unsafe trait 标记
+   - `trait_impl_registry`：public trait impl surface、known implementors、条件 impl、associated type / const bindings
 
 4. 文档语义原文
    - `# Panics`
@@ -270,7 +268,13 @@ Phase 1 只提取“事实”，不做语义推理。核心字段包括：
    - 代码位置
    - 能力标签
 
-### 4.3 `knowledge.json` — 唯一权威原始数据格式
+### 4.3 `knowledge.json` 与上下文分层视图
+
+说明：
+
+- 仓库内**实际落地**的 Phase 1 权威原始 schema 应以 `seraph-types::Knowledge` 为准
+- 其核心是归一化实体集合：`crate_meta`、`modules`、`types`、`apis`、`symbols`、`trait_registry`、`trait_impl_registry`、`examples`、`risk_facts`
+- 下面的 `level_0/1/2/3` 示例是为了说明 Phase 3 如何被 `s3-context` 分层消费，可作为派生缓存 / 上下文视图，不要求与磁盘上的原始 JSON 一模一样
 
 ```json
 {
@@ -283,16 +287,24 @@ Phase 1 只提取“事实”，不做语义推理。核心字段包括：
     "one_line": "Rust 的 JSON 解析与序列化库",
     "key_types": ["Value", "Map", "Error"]
   },
-  "level_1_modules": [
+  "level_1_type_surface": [
     {
-      "module_id": "mod_001",
+      "anchor_kind": "module_entry",
+      "anchor_module_id": "mod_001",
+      "anchor_type_id": null,
       "path": "serde_json",
       "doc_summary": "顶层 JSON 解析与序列化入口",
-      "types": [
-        {"type_id": "type_001", "name": "Value"}
-      ],
       "api_ids": ["fn_001", "fn_002", "fn_003"],
       "api_names": ["from_str", "from_slice", "from_reader"]
+    },
+    {
+      "anchor_kind": "type",
+      "anchor_module_id": "mod_001",
+      "anchor_type_id": "type_001",
+      "path": "serde_json::Value",
+      "doc_summary": "通用 JSON 值表示",
+      "api_ids": ["fn_015", "fn_016"],
+      "api_names": ["pointer", "pointer_mut"]
     }
   ],
   "level_2_types": [
@@ -302,8 +314,7 @@ Phase 1 只提取“事实”，不做语义推理。核心字段包括：
       "kind": "enum",
       "constructors": [],
       "method_ids": ["fn_015", "fn_016"],
-      "trait_impls": ["Clone", "Debug"],
-      "lifecycle_hint": "stateless"
+      "trait_impls": ["Clone", "Debug"]
     }
   ],
   "level_3_apis": [
@@ -330,6 +341,15 @@ Phase 1 只提取“事实”，不做语义推理。核心字段包括：
       "associated_types": []
     }
   ],
+  "trait_impl_registry": [
+    {
+      "trait_impl_id": "trait_impl_001",
+      "target_type_id": "type_001",
+      "trait_id": "trait_001",
+      "trait_ref_text": "serde::de::DeserializeOwned",
+      "trait_canonical_path": "serde::de::DeserializeOwned"
+    }
+  ],
   "examples_index": [
     {
       "example_id": "ex_001",
@@ -347,6 +367,10 @@ Phase 1 只提取“事实”，不做语义推理。核心字段包括：
   }
 }
 ```
+
+其中，`level_1_type_surface` 提供的是 **Phase 1 的锚点目录**。  
+它的 `anchor_kind / anchor_module_id / anchor_type_id` 必须与 Phase 2 的 FCG capability 复用同一套坐标系，避免 Stage 1.5 在 capability 与锚点概览之间再次做名称猜测。
+其中当 `anchor_kind = "type"` 时，`anchor_type_id` 就是该锚点对应的稳定 `type_id`。
 
 ### 4.4 Phase 1 输出边界
 
@@ -370,6 +394,48 @@ Phase 2 读取 `knowledge.json`，产出唯一语义模型文件 `models.json`�
 
 FCG 的职责是把 API 从“签名空间”转换为“能力空间”。
 
+在 v5 中，FCG 采用**类型中心 capability** 方案，而不是“模块 = capability”的旧方案。
+
+#### 核心定义
+
+一个 capability 节点由两部分组成：
+
+1. **锚点（anchor）**
+   - 优先使用 public nominal type
+   - 若 API 没有 owner type，则使用 synthetic module entry 作为锚点
+
+2. **角色（role）**
+   - `construction`
+   - `query`
+   - `mutation`
+   - `iteration`
+   - `conversion`
+   - `finalization`
+   - `ffi`
+
+因此，一个 capability 本质上是：
+
+> **(type / module_entry) + role**
+
+例如：
+
+- `cap::serde_json::module_entry::construction`
+- `cap::serde_json::Value::query`
+- `cap::serde_json::Value::mutation`
+- `cap::hashbrown::map::HashMap::iteration`
+
+#### 为什么采用类型中心 capability
+
+因为对 Rust 库而言，真实使用语义通常由以下因素决定：
+
+- API 的 owner type
+- receiver 语义（`&self` / `&mut self` / `self`）
+- 对象生命周期与状态机
+- 类型之间的构造 / 返回 / 转换关系
+
+模块更多反映“代码放在哪里”，而类型更能反映“调用时手里拿着什么对象”。  
+对于后续的 planner、codegen 与 SLM 对接，类型中心建模更贴近真实代码结构。
+
 在 v5 中，FCG 产出四类关键信息：
 
 1. capability 节点
@@ -382,25 +448,117 @@ FCG 的职责是把 API 从“签名空间”转换为“能力空间”。
   "fcg": {
     "capabilities": [
       {
-        "cap_id": "cap_parse",
-        "name": "JSON 解析",
-        "description": "从字符串、字节或 Reader 读取 JSON",
+        "cap_id": "cap::serde_json::module_entry::construction",
+        "anchor_kind": "module_entry",
+        "anchor_module_id": "mod_001",
+        "anchor_type_id": null,
+        "role": "construction",
+        "name": "serde_json 入口解析",
+        "description": "从字符串、字节或 Reader 进入 JSON 值构造流程",
         "api_ids": ["fn_001", "fn_002", "fn_003"],
         "entry_api_ids": ["fn_001", "fn_002", "fn_003"],
-        "connects_to": ["cap_query", "cap_modify", "cap_serialize"]
+        "connects_to": ["cap::serde_json::Value::query", "cap::serde_json::Value::mutation"]
+      },
+      {
+        "cap_id": "cap::serde_json::Value::query",
+        "anchor_kind": "type",
+        "anchor_module_id": "mod_001",
+        "anchor_type_id": "type_001",
+        "role": "query",
+        "name": "Value 查询",
+        "description": "围绕 Value 的路径查询、索引访问与只读检查",
+        "api_ids": ["fn_015"],
+        "entry_api_ids": [],
+        "connects_to": ["cap::serde_json::Value::mutation"]
+      },
+      {
+        "cap_id": "cap::serde_json::Value::mutation",
+        "anchor_kind": "type",
+        "anchor_module_id": "mod_001",
+        "anchor_type_id": "type_001",
+        "role": "mutation",
+        "name": "Value 修改",
+        "description": "围绕 Value 的可变访问、路径写入与局部更新",
+        "api_ids": ["fn_016"],
+        "entry_api_ids": [],
+        "connects_to": []
       }
     ],
     "capability_chains": [
-      ["cap_parse", "cap_query", "cap_modify", "cap_serialize"]
+      [
+        "cap::serde_json::module_entry::construction",
+        "cap::serde_json::Value::query",
+        "cap::serde_json::Value::mutation"
+      ]
     ],
     "capability_api_index": {
-      "cap_parse": ["fn_001", "fn_002", "fn_003"],
-      "cap_query": ["fn_015", "fn_016"]
+      "cap::serde_json::module_entry::construction": ["fn_001", "fn_002", "fn_003"],
+      "cap::serde_json::Value::query": ["fn_015"],
+      "cap::serde_json::Value::mutation": ["fn_016"]
     },
-    "stage1_summary": "本库提供 6 项核心能力：JSON解析、JSON构建、类型转换、JSON输出、JSON查询、JSON修改。典型能力链：解析→查询→修改→输出。"
+    "stage1_summary": {
+      "capability_cards": [
+        {
+          "cap_id": "cap::serde_json::module_entry::construction",
+          "name": "serde_json 入口解析",
+          "anchor_path": "serde_json",
+          "role": "construction",
+          "description": "从字符串、字节或 Reader 进入 JSON 值构造流程"
+        },
+        {
+          "cap_id": "cap::serde_json::Value::query",
+          "name": "Value 查询",
+          "anchor_path": "serde_json::Value",
+          "role": "query",
+          "description": "围绕 Value 的路径查询、索引访问与只读检查"
+        },
+        {
+          "cap_id": "cap::serde_json::Value::mutation",
+          "name": "Value 修改",
+          "anchor_path": "serde_json::Value",
+          "role": "mutation",
+          "description": "围绕 Value 的可变访问、路径写入与局部更新"
+        }
+      ],
+      "recommended_chains": [
+        [
+          "cap::serde_json::module_entry::construction",
+          "cap::serde_json::Value::query",
+          "cap::serde_json::Value::mutation"
+        ]
+      ],
+      "one_liner": "本库提供 3 项核心能力：serde_json 入口解析、Value 查询、Value 修改。典型能力链：入口解析→Value 查询→Value 修改。"
+    }
   }
 }
 ```
+
+`stage1_summary` 在 v5 中是**压缩结构化摘要**，不是单纯一段 prose。  
+原因是 Stage 1 需要直接输出 `selected_capability_ids`，因此输入里必须显式携带 `cap_id`、简短说明和典型能力链。
+
+#### capability 构建规则
+
+1. **锚点选择**
+   - 若 API 有 `owner_type_id`，则 capability 锚定到该 type
+   - 若 API 没有 `owner_type_id`，则 capability 锚定到其 public anchor module 的 synthetic module entry
+
+2. **角色归类**
+   - `construction`：构造器、返回 `Self` / owner type 的入口 API、创建对象的 free function
+   - `query`：只读访问、检查、getter、borrowed view
+   - `mutation`：`&mut self` 修改器、entry editor、状态更新
+   - `iteration`：返回 iterator / drain / cursor / view producer 的 API
+   - `conversion`：`into_*` / `to_*` / `as_*` 中跨语义面转换的 API
+   - `finalization`：`close` / `finish` / `shutdown` / 终态提交
+   - `ffi`：显式 ABI 边界或 FFI 相关 public surface
+
+3. **边构建**
+   - 同一锚点内部：`construction` 可连向该锚点上的其他角色 capability
+   - 跨锚点：若某个 capability 中的 API 返回了另一个 public type 的锚点，则连向目标 type 的相关 capability
+   - 若目标类型文本存在歧义，则宁可不连，避免错误链路
+
+4. **保守性原则**
+   - FCG 允许漏连，不允许明显误连
+   - 因此 capability 链是“可证据支持的使用流”，不是强行补全的全图
 
 #### v5 对 FCG 渐进式加载的定义
 
@@ -409,7 +567,9 @@ v5 不再使用“Stage 1 内部的第二轮 LLM 交互”来展开 capability �
 改为：
 
 1. Stage 1：只给压缩 capability 摘要
-2. Stage 1.5：给 `capability_api_index` + Level 1 模块结构，完成 API 映射
+   - 至少包含 `cap_id`、`name`、`role`、`anchor_path`、`recommended_chains`
+2. Stage 1.5：给 `capability_api_index` + Level 1 类型锚点概览，完成 API 映射
+   - 其中 capability 锚点与 `knowledge.level_1_type_surface` 必须共用同一套 anchor 坐标
 
 这样，渐进式加载仍然存在，但被**收敛到阶段边界**，不再与 Stage 1.5 重复。
 
@@ -571,7 +731,7 @@ CTS 在 v5 中仍然不是独立的顶层文件，而是：
 | Stage | 组件 | 主要输入 | 主要输出 | 责任 |
 |-------|------|----------|----------|------|
 | 1 | `scenario-generator` | `models.fcg.stage1_summary`、风险摘要、`coverage.next_priority`、未覆盖 API 名称提示 | `scenario.json` | 定义场景与 capability 选择 |
-| 1.5 | `scenario-api-mapper` | `scenario.json`、Level 1 模块结构、`capability_api_index`、未覆盖 API 详情 | `api_mapping.json` | capability→API 映射 |
+| 1.5 | `scenario-api-mapper` | `scenario.json`、已选 capability 卡片详情、Level 1 类型锚点概览（与 FCG 共用 anchor 坐标）、`capability_api_index`、未覆盖 API 详情 | `api_mapping.json` | capability→API 映射 |
 | split | `s3-context --split-mapping` | `api_mapping.json` | `sub_mapping_*.json` | 语义闭包分批 |
 | 2 | `api-planner` | `sub_mapping`、Level 2/3、SLM、Contract、Trait 定义 | `api_plan_XX.json` | 有序调用计划 |
 | 3 | `harness-codegen` | `api_plan_XX.json`、Level 3、examples、风险标注、SLM 简化版 | `harness_RRR_SS.rs` | 生成 harness |
@@ -585,6 +745,7 @@ CTS 在 v5 中仍然不是独立的顶层文件，而是：
 - crate 名称
 - crate 一句话描述
 - `models.fcg.stage1_summary`
+  - 其中应包含压缩 capability 卡片、典型 capability 链、`one_liner`
 - `models.risk_surface_map.type_synthesis_overview.one_liner`
 - Rust 特性风险摘要
 - `coverage.next_priority`
@@ -599,9 +760,13 @@ CTS 在 v5 中仍然不是独立的顶层文件，而是：
   "name": "流式 JSON 读取与路径查询",
   "description": "从 Reader 读取 JSON，按路径查询嵌套字段，修改后重新输出",
   "scenario_type": "functional",
-  "selected_capability_ids": ["cap_parse", "cap_query", "cap_modify"],
+  "selected_capability_ids": [
+    "cap::serde_json::module_entry::construction",
+    "cap::serde_json::Value::query",
+    "cap::serde_json::Value::mutation"
+  ],
   "fuzz_variation_points": ["输入字节流", "查询路径", "修改值"],
-  "target_api_name_hints": ["from_reader", "Value::pointer"],
+  "target_api_name_hints": ["from_reader", "Value::pointer", "Value::pointer_mut"],
   "semantic_constraints": [
     "场景必须是合理的库使用方式",
     "至少覆盖 1 个未验证 API"
@@ -620,7 +785,8 @@ CTS 在 v5 中仍然不是独立的顶层文件，而是：
 #### 输入
 
 - `scenario.json`
-- `knowledge.level_1_modules`
+- `models.fcg.capabilities` 中被 `selected_capability_ids` 选中的 capability 卡片
+- `knowledge.level_1_type_surface`
 - `models.fcg.capability_api_index`
 - `coverage.json` 中未验证 / 未耗尽 API 详情
 
@@ -632,38 +798,60 @@ CTS 在 v5 中仍然不是独立的顶层文件，而是：
   "scenario_id": "scn_003",
   "scenario_name": "流式 JSON 读取与路径查询",
   "scenario_description": "从 Reader 读取 JSON，按路径查询嵌套字段，修改后重新输出",
-  "selected_capability_ids": ["cap_parse", "cap_query", "cap_modify"],
+  "selected_capability_ids": [
+    "cap::serde_json::module_entry::construction",
+    "cap::serde_json::Value::query",
+    "cap::serde_json::Value::mutation"
+  ],
   "api_mapping": [
     {
       "api_id": "fn_003",
       "api_path": "serde_json::from_reader",
-      "capability_id": "cap_parse",
+      "capability_id": "cap::serde_json::module_entry::construction",
       "role": "entry",
       "reason": "从 Reader 解析是该场景的入口"
     },
     {
       "api_id": "fn_015",
       "api_path": "serde_json::Value::pointer",
-      "capability_id": "cap_query",
+      "capability_id": "cap::serde_json::Value::query",
       "role": "core",
       "reason": "使用路径查询嵌套字段"
+    },
+    {
+      "api_id": "fn_016",
+      "api_path": "serde_json::Value::pointer_mut",
+      "capability_id": "cap::serde_json::Value::mutation",
+      "role": "core",
+      "reason": "对目标路径执行可变访问并写入新值"
     }
   ],
   "types_needed": [
     {"type_id": "type_001", "path": "serde_json::Value"}
   ],
-  "targeted_api_ids": ["fn_003", "fn_015"],
-  "targeted_api_names": ["serde_json::from_reader", "serde_json::Value::pointer"],
+  "targeted_api_ids": ["fn_003", "fn_015", "fn_016"],
+  "targeted_api_names": ["serde_json::from_reader", "serde_json::Value::pointer", "serde_json::Value::pointer_mut"],
   "capability_trace": {
-    "cap_parse": ["fn_003"],
-    "cap_query": ["fn_015"]
+    "cap::serde_json::module_entry::construction": ["fn_003"],
+    "cap::serde_json::Value::query": ["fn_015"],
+    "cap::serde_json::Value::mutation": ["fn_016"]
   }
 }
 ```
 
 #### v5 的关键修复
 
-Stage 1.5 不再只拿“模块 + API 名称列表”去猜测映射，而是显式使用 `capability_api_index`。
+Stage 1.5 不再只拿“模块 + API 名称列表”去猜测映射，而是显式使用**类型中心 capability 索引**。
+
+同时，`scenario-api-mapper` 不需要重新推断 capability 的锚点归属。  
+它直接消费：
+
+- `scenario.json` 中的 `selected_capability_ids`
+- `models.fcg.capabilities` 中对应的 capability 语义卡片
+- `models.fcg.capability_api_index`
+- `knowledge.level_1_type_surface` 中与 capability 共享的 anchor 坐标
+
+因此 Stage 1.5 做的是**索引展开与场景裁剪**，而不是二次 capability 建模。
 
 #### 一致性规则
 
@@ -685,7 +873,16 @@ Stage 1.5 不再只拿“模块 + API 名称列表”去猜测映射，而是显
 4. 辅助 API 优先被移动到下一批
 5. 每批硬上限为 `8`
 
-拆分后的每个 `sub_mapping_XX.json` 仍使用与 `api_mapping.json` 相同的 schema，只是 `api_mapping` 和 `targeted_api_ids` 为子集。
+拆分后的每个 `sub_mapping_XX.json` 仍使用与 `api_mapping.json` 相同的 schema，但以下字段必须同步收缩为子集：
+
+- `selected_capability_ids`
+- `api_mapping`
+- `targeted_api_ids`
+- `targeted_api_names`
+- `capability_trace`
+- `types_needed`
+
+也就是说，`sub_mapping_XX.json` 必须是一个**自洽的局部映射**，而不是“只删了部分 API、其余字段还保留全量场景信息”的半残缺对象。
 
 ### 6.5 Skill 2：`api-planner`
 
@@ -697,6 +894,7 @@ Stage 1.5 不再只拿“模块 + API 名称列表”去猜测映射，而是显
 - `models.slm`
 - `models.api_contracts`
 - `knowledge.trait_registry`
+- `knowledge.trait_impl_registry`（如需判断 public impl surface / known implementors）
 
 #### 输出格式：`api_plan_XX.json`
 
@@ -705,7 +903,7 @@ Stage 1.5 不再只拿“模块 + API 名称列表”去猜测映射，而是显
   "plan_id": "plan_003_01",
   "scenario_id": "scn_003",
   "mapping_id": "map_003_01",
-  "api_ids": ["fn_003", "fn_015"],
+  "api_ids": ["fn_003", "fn_015", "fn_016"],
   "types_needed": ["type_001"],
   "required_trait_ids": ["trait_001"],
   "stateful_type_ids": [],
@@ -728,6 +926,19 @@ Stage 1.5 不再只拿“模块 + API 名称列表”去猜测映射，而是显
       "state_after": "ValueReady",
       "arg_sources": {"pointer": "fuzzer_input.pointer"},
       "preconditions": ["pointer 必须是 UTF-8 字符串"],
+      "result_handling": "if None { return; }"
+    },
+    {
+      "step_no": 3,
+      "api_id": "fn_016",
+      "purpose": "按路径修改字段",
+      "state_before": "ValueReady",
+      "state_after": "ValueReady",
+      "arg_sources": {
+        "pointer": "fuzzer_input.pointer",
+        "new_value": "fuzzer_input.replacement_value"
+      },
+      "preconditions": ["pointer 必须指向可写入位置"],
       "result_handling": "if None { return; }"
     }
   ],
@@ -895,10 +1106,11 @@ coverage_rate     = |covered_api_ids| / |total_api_ids|
 
 ```json
 {
-  "total_api_ids": ["fn_001", "fn_002", "fn_003", "fn_015", "fn_020"],
+  "total_api_ids": ["fn_001", "fn_002", "fn_003", "fn_015", "fn_016", "fn_020"],
   "api_status": {
     "fn_003": "validated",
     "fn_015": "attempted",
+    "fn_016": "targeted",
     "fn_020": "targeted"
   },
   "failed_attempts": {
@@ -910,7 +1122,7 @@ coverage_rate     = |covered_api_ids| / |total_api_ids|
   },
   "covered_api_ids": ["fn_003"],
   "exhausted_api_ids": [],
-  "uncovered_api_ids": ["fn_001", "fn_002", "fn_015", "fn_020"],
+  "uncovered_api_ids": ["fn_001", "fn_002", "fn_015", "fn_016", "fn_020"],
   "harnesses": {
     "harness_003_01": {
       "round": 3,
@@ -918,7 +1130,7 @@ coverage_rate     = |covered_api_ids| / |total_api_ids|
       "scenario_id": "scn_003",
       "mapping_id": "map_003_01",
       "plan_id": "plan_003_01",
-      "api_ids": ["fn_003", "fn_015"],
+      "api_ids": ["fn_003", "fn_015", "fn_016"],
       "status": "attempted"
     }
   },
@@ -927,7 +1139,7 @@ coverage_rate     = |covered_api_ids| / |total_api_ids|
   "next_priority": [
     {"api_id": "fn_015", "reason": "高风险查询路径，尚未验证"}
   ],
-  "coverage_rate": 0.20
+  "coverage_rate": 0.17
 }
 ```
 
@@ -963,11 +1175,12 @@ coverage_rate     = |covered_api_ids| / |total_api_ids|
 ### 8.3 目录结构
 
 ```text
-seraph/
-├── s3-extract/
-├── s3-model/
-├── s3-context/
-├── s3-coverage/
+SERAPH/
+├── crates/
+│   ├── s3-extract/
+│   ├── s3-model/
+│   ├── s3-context/
+│   └── s3-coverage/
 ├── skills/
 │   ├── scenario-generator/
 │   ├── scenario-api-mapper/
@@ -1029,7 +1242,8 @@ seraph/
 #### Stage 1.5
 
 - `scenario.json`
-- `knowledge.level_1_modules`
+- `models.fcg.capabilities` 中被选中的 capability 卡片
+- `knowledge.level_1_type_surface`
 - `models.fcg.capability_api_index`
 - `coverage.uncovered_api_ids` 的详细项
 
@@ -1041,6 +1255,7 @@ seraph/
 - `models.slm`
 - `models.api_contracts`
 - `knowledge.trait_registry`
+- `knowledge.trait_impl_registry`
 
 #### Stage 3
 
@@ -1266,7 +1481,7 @@ v4 的问题不是 Stage 1.5 不合理，而是 Stage 1 内又额外设计了一
 
 | 挑战 | 风险 | v5 应对 |
 |------|------|---------|
-| 大型 crate API 数量过多 | 上下文爆炸 | Stage 1 capability 摘要 + Stage 1.5 能力索引 + Stage 2 语义闭包分批 |
+| 大型 crate API 数量过多 | 上下文爆炸 | Stage 1 类型中心 capability 摘要 + Stage 1.5 能力索引 + Stage 2 语义闭包分批 |
 | crash 归属不清 | 误判真实 bug | `needs_review` 队列 + Sanitizer + debug info |
 | 泛型 API 难以实例化 | planner/codegen 漂移 | `generic_constraints` + CTS A/B/C/D |
 | 状态型 API 容易误用 | 假阳性高 | SLM + Stage 3/4 语义护栏 |

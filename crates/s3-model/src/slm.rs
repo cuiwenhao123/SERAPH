@@ -32,7 +32,7 @@ pub fn build_slm_models(knowledge: &Knowledge) -> Vec<StateLifecycleModel> {
                 .filter(|api| api.owner_type_id.as_ref() == Some(&ty.type_id))
                 .collect::<Vec<_>>();
             let states = build_states(&related_apis, model_kind);
-            let transitions = build_transitions(&related_apis, model_kind);
+            let transitions = build_transitions(&related_apis, model_kind, &states);
             let forbidden_transitions = build_forbidden_transitions(&related_apis);
             let fuzzable_states = choose_fuzzable_states(&states);
 
@@ -49,11 +49,7 @@ pub fn build_slm_models(knowledge: &Knowledge) -> Vec<StateLifecycleModel> {
         .collect()
 }
 
-fn score_type(
-    knowledge: &Knowledge,
-    type_id: &TypeId,
-    drop_types: &BTreeSet<TypeId>,
-) -> u32 {
+fn score_type(knowledge: &Knowledge, type_id: &TypeId, drop_types: &BTreeSet<TypeId>) -> u32 {
     let related_apis = knowledge
         .apis
         .iter()
@@ -73,7 +69,7 @@ fn score_type(
     }
     if related_apis
         .iter()
-        .filter(|api| api.receiver.as_deref() == Some("&mut self"))
+        .filter(|api| is_mut_receiver(api.receiver.as_deref()))
         .count()
         >= 3
     {
@@ -117,7 +113,10 @@ fn build_states(related_apis: &[&ApiInfo], model_kind: SlmModelKind) -> Vec<Stri
         if related_apis.iter().any(|api| api.receiver.is_some()) {
             states.push("InUse".to_owned());
         }
-        if related_apis.iter().any(|api| is_close_like(api.name.as_str())) {
+        if related_apis
+            .iter()
+            .any(|api| is_close_like(api.name.as_str()))
+        {
             states.push("Closed".to_owned());
         }
         return states;
@@ -125,21 +124,29 @@ fn build_states(related_apis: &[&ApiInfo], model_kind: SlmModelKind) -> Vec<Stri
 
     if related_apis
         .iter()
-        .any(|api| is_activate_like(api.name.as_str()))
+        .any(|api| !is_constructor_like(api) && is_activate_like(api.name.as_str()))
     {
         states.push("Active".to_owned());
     }
-    if related_apis.iter().any(|api| is_close_like(api.name.as_str())) {
+    if related_apis
+        .iter()
+        .any(|api| !is_constructor_like(api) && is_close_like(api.name.as_str()))
+    {
         states.push("Closed".to_owned());
     }
     states
 }
 
-fn build_transitions(related_apis: &[&ApiInfo], model_kind: SlmModelKind) -> Vec<StateTransition> {
+fn build_transitions(
+    related_apis: &[&ApiInfo],
+    model_kind: SlmModelKind,
+    states: &[String],
+) -> Vec<StateTransition> {
     let mut transitions = Vec::new();
+    let has_active_state = states.iter().any(|state| state == "Active");
 
     for api in related_apis {
-        if matches!(api.api_kind, ApiKind::Constructor | ApiKind::AssocFunction) {
+        if is_constructor_like(api) {
             transitions.push(StateTransition {
                 from: "Uninitialized".into(),
                 to: "Constructed".into(),
@@ -158,9 +165,17 @@ fn build_transitions(related_apis: &[&ApiInfo], model_kind: SlmModelKind) -> Vec
         } else if is_activate_like(api.name.as_str()) {
             ("Constructed", "Active")
         } else if is_close_like(api.name.as_str()) {
-            ("Active", "Closed")
+            if has_active_state {
+                ("Active", "Closed")
+            } else {
+                ("Constructed", "Closed")
+            }
         } else {
-            ("Active", "Active")
+            if has_active_state {
+                ("Active", "Active")
+            } else {
+                ("Constructed", "Constructed")
+            }
         };
 
         transitions.push(StateTransition {
@@ -239,6 +254,23 @@ fn infer_forbidden_from_state(reason: &str) -> String {
     } else {
         "Unknown".to_owned()
     }
+}
+
+fn is_constructor_like(api: &ApiInfo) -> bool {
+    matches!(api.api_kind, ApiKind::Constructor | ApiKind::AssocFunction)
+}
+
+fn is_mut_receiver(receiver: Option<&str>) -> bool {
+    let Some(receiver) = receiver else {
+        return false;
+    };
+    let normalized = receiver
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+
+    normalized.contains("mutself")
 }
 
 fn split_non_empty_lines(section: &str) -> Vec<String> {

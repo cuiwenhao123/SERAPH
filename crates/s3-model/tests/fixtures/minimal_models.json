@@ -169,9 +169,7 @@
     {
       "api_id": "api::demo::query::Parser::start",
       "path": "demo::query::Parser::start",
-      "preconditions": [
-        "Panics if the parser is already closed."
-      ],
+      "preconditions": [],
       "postconditions": [
         "returns ()"
       ],
@@ -239,21 +237,26 @@
       {
         "api_id": "api::demo::query::Parser::new",
         "risk_level": "low",
-        "reasons": [],
+        "reasons": [
+          "owner type implements Drop"
+        ],
         "recommended_fuzz_strategy": "exercise documented public entry points"
       },
       {
         "api_id": "api::demo::query::Parser::start",
-        "risk_level": "low",
+        "risk_level": "medium",
         "reasons": [
-          "documented panic conditions"
+          "documented panic conditions",
+          "owner type implements Drop"
         ],
         "recommended_fuzz_strategy": "exercise documented public entry points"
       },
       {
         "api_id": "api::demo::query::Parser::close",
         "risk_level": "low",
-        "reasons": [],
+        "reasons": [
+          "owner type implements Drop"
+        ],
         "recommended_fuzz_strategy": "exercise documented public entry points"
       },
       {
