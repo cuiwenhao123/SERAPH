@@ -14,6 +14,7 @@
   - `slm`
   - `api_contracts`
   - `risk_surface_map`
+  - `trait_surface_map`
 
 ## Phase 2 model shape
 
@@ -38,6 +39,11 @@
   - `api_risks` stays API-centric
   - `rust_feature_risks` can now report either `apis_affected` or `types_affected`
   - currently covers features such as `extern_abi`, `borrowed_return`, `repr_packed`, `conditional_impl`, and `panic_in_drop`
+- `trait_surface_map`
+  - keeps a type-centered summary of high-signal trait impl surfaces
+  - only promotes impls that Phase 2 considers semantically meaningful for downstream planning
+  - keeps crate-local trait surfaces linked back to Phase 1 `api_id` rows when trait methods exist
+  - preserves `associated_type_bindings`, `associated_const_bindings`, `cfg_attrs`, and impl-level `is_unsafe`
 
 ## Deterministic guarantees
 

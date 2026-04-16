@@ -436,5 +436,8 @@
         "risk": "returned value borrows from self or input arguments"
       }
     ]
+  },
+  "trait_surface_map": {
+    "type_surfaces": []
   }
 }

@@ -231,7 +231,7 @@ fn classify_role(api: &ApiInfo, knowledge: &Knowledge, type_lookup: &TypeLookup)
     if is_iteration_like(api) {
         return CapabilityRole::Iteration;
     }
-    if is_conversion_like(api) {
+    if is_conversion_like(api, type_lookup) {
         return CapabilityRole::Conversion;
     }
     if is_construction_api(api, type_lookup) {
@@ -786,6 +786,34 @@ fn is_iteration_like(api: &ApiInfo) -> bool {
             .unwrap_or(false)
 }
 
-fn is_conversion_like(api: &ApiInfo) -> bool {
-    api.name.starts_with("into_") || api.name.starts_with("to_") || api.name.starts_with("as_")
+fn is_conversion_like(api: &ApiInfo, type_lookup: &TypeLookup) -> bool {
+    if api.name.starts_with("into_")
+        || api.name.starts_with("try_into_")
+        || api.name.starts_with("to_")
+        || api.name.starts_with("as_")
+    {
+        return true;
+    }
+
+    // Some Rust adapters are named semantically (`freeze`, `reader`, `writer`)
+    // rather than with an `into_*` prefix. When they consume `self` and expose
+    // a different public type, model them as conversions.
+    receiver_is_value(api.receiver.as_deref())
+        && candidate_return_types(api)
+            .iter()
+            .filter_map(|candidate| resolve_type_id(candidate.as_str(), type_lookup))
+            .any(|target_type_id| api.owner_type_id.as_ref() != Some(&target_type_id))
+}
+
+fn receiver_is_value(receiver: Option<&str>) -> bool {
+    receiver
+        .map(|receiver| {
+            let normalized = receiver
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect::<String>()
+                .to_ascii_lowercase();
+            normalized == "self" || normalized == "mutself"
+        })
+        .unwrap_or(false)
 }

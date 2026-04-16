@@ -10,8 +10,9 @@ use seraph_types::{
     SlmModelKind, Stage1CapabilityCard, Stage1Summary, StateLifecycleModel, StateTransition,
     SymbolId, SymbolInfo, SymbolKind, TraitAssociatedConstBinding, TraitAssociatedConstDef,
     TraitAssociatedTypeBinding, TraitAssociatedTypeDef, TraitExposureKind, TraitId, TraitImplId,
-    TraitImplInfo, TraitInfo, TraitOrigin, TypeId, TypeInfo, TypeKind, TypeLayoutFact,
-    TypeSynthesisOverview, VariantKind,
+    TraitImplInfo, TraitInfo, TraitOrigin, TraitSurfaceEntry, TraitSurfaceKind,
+    TraitSurfaceMap, TraitSurfaceSignificance, TypeId, TypeInfo, TypeKind,
+    TypeSynthesisOverview, TypeTraitSurface, TypeLayoutFact, VariantKind,
 };
 use std::collections::BTreeMap;
 
@@ -140,6 +141,30 @@ fn models_roundtrip_preserves_type_centered_fcg_fields() {
                 risk: "borrow ties output to input".into(),
             }],
         },
+        trait_surface_map: TraitSurfaceMap {
+            type_surfaces: vec![TypeTraitSurface {
+                type_id: TypeId::from("type::demo::Parser"),
+                path: "demo::Parser".into(),
+                trait_surfaces: vec![TraitSurfaceEntry {
+                    trait_impl_id: TraitImplId::from(
+                        "trait_impl::core::default::Default::for::demo::Parser",
+                    ),
+                    trait_id: TraitId::from("trait::core::default::Default"),
+                    trait_name: "Default".into(),
+                    trait_path: "core::default::Default".into(),
+                    trait_origin: TraitOrigin::External,
+                    for_type_text: "demo::Parser".into(),
+                    surface_kind: TraitSurfaceKind::Construction,
+                    significance: TraitSurfaceSignificance::Medium,
+                    capability_summary: "supports default construction".into(),
+                    trait_method_api_ids: vec![],
+                    associated_type_bindings: vec![],
+                    associated_const_bindings: vec![],
+                    cfg_attrs: vec!["#[cfg(feature = \"std\")]".into()],
+                    is_unsafe: false,
+                }],
+            }],
+        },
     };
 
     let json = serde_json::to_string_pretty(&models).unwrap();
@@ -151,6 +176,10 @@ fn models_roundtrip_preserves_type_centered_fcg_fields() {
         "demo::query::Document"
     );
     assert_eq!(decoded.slm[0].model_kind, SlmModelKind::Full);
+    assert_eq!(
+        decoded.trait_surface_map.type_surfaces[0].trait_surfaces[0].trait_name,
+        "Default"
+    );
 }
 
 #[test]
@@ -257,6 +286,78 @@ fn models_roundtrip_preserves_phase2_semantic_fields() {
                 risk: "borrow ties output to input".into(),
             }],
         },
+        trait_surface_map: TraitSurfaceMap {
+            type_surfaces: vec![TypeTraitSurface {
+                type_id: TypeId::from("type::demo::Parser"),
+                path: "demo::Parser".into(),
+                trait_surfaces: vec![
+                    TraitSurfaceEntry {
+                        trait_impl_id: TraitImplId::from(
+                            "trait_impl::demo::io::ReaderExt::for::demo::Parser",
+                        ),
+                        trait_id: TraitId::from("trait::demo::io::ReaderExt"),
+                        trait_name: "ReaderExt".into(),
+                        trait_path: "demo::io::ReaderExt".into(),
+                        trait_origin: TraitOrigin::Local,
+                        for_type_text: "demo::Parser".into(),
+                        surface_kind: TraitSurfaceKind::DomainTrait,
+                        significance: TraitSurfaceSignificance::High,
+                        capability_summary: "supports the crate-local reader extension trait".into(),
+                        trait_method_api_ids: vec![ApiId::from("api::demo::io::ReaderExt::advance")],
+                        associated_type_bindings: vec![TraitAssociatedTypeBinding {
+                            name: "Item".into(),
+                            generic_params: vec![],
+                            where_clauses: vec![],
+                            bounds: vec!["Clone".into()],
+                            assigned_type: Some("u8".into()),
+                            source: Some(CodeRef {
+                                file: "src/io.rs".into(),
+                                start_line: 40,
+                                end_line: 40,
+                            }),
+                        }],
+                        associated_const_bindings: vec![TraitAssociatedConstBinding {
+                            name: "BLOCK_SIZE".into(),
+                            value_text: Some("4096".into()),
+                            source: Some(CodeRef {
+                                file: "src/io.rs".into(),
+                                start_line: 41,
+                                end_line: 41,
+                            }),
+                        }],
+                        cfg_attrs: vec!["#[cfg(feature = \"std\")]".into()],
+                        is_unsafe: true,
+                    },
+                    TraitSurfaceEntry {
+                        trait_impl_id: TraitImplId::from(
+                            "trait_impl::core::iter::traits::collect::IntoIterator::for::demo::Parser",
+                        ),
+                        trait_id: TraitId::from(
+                            "trait::core::iter::traits::collect::IntoIterator",
+                        ),
+                        trait_name: "IntoIterator".into(),
+                        trait_path: "core::iter::traits::collect::IntoIterator".into(),
+                        trait_origin: TraitOrigin::External,
+                        for_type_text: "demo::Parser".into(),
+                        surface_kind: TraitSurfaceKind::Iteration,
+                        significance: TraitSurfaceSignificance::High,
+                        capability_summary: "can be consumed as an iterator source".into(),
+                        trait_method_api_ids: vec![],
+                        associated_type_bindings: vec![TraitAssociatedTypeBinding {
+                            name: "IntoIter".into(),
+                            generic_params: vec![],
+                            where_clauses: vec![],
+                            bounds: vec![],
+                            assigned_type: Some("demo::ParserIntoIter".into()),
+                            source: None,
+                        }],
+                        associated_const_bindings: vec![],
+                        cfg_attrs: vec![],
+                        is_unsafe: false,
+                    },
+                ],
+            }],
+        },
     };
 
     let json = serde_json::to_string_pretty(&models).unwrap();
@@ -285,6 +386,29 @@ fn models_roundtrip_preserves_phase2_semantic_fields() {
         vec![TypeId::from("type::demo::Parser")]
     );
     assert_eq!(decoded.api_contracts[0].side_effects, vec!["consumes input bytes"]);
+    assert_eq!(decoded.trait_surface_map.type_surfaces.len(), 1);
+    assert_eq!(
+        decoded.trait_surface_map.type_surfaces[0].trait_surfaces[0].surface_kind,
+        TraitSurfaceKind::DomainTrait
+    );
+    assert_eq!(
+        decoded.trait_surface_map.type_surfaces[0].trait_surfaces[0].significance,
+        TraitSurfaceSignificance::High
+    );
+    assert_eq!(
+        decoded.trait_surface_map.type_surfaces[0].trait_surfaces[0].trait_method_api_ids,
+        vec![ApiId::from("api::demo::io::ReaderExt::advance")]
+    );
+    assert_eq!(
+        decoded.trait_surface_map.type_surfaces[0].trait_surfaces[0].associated_const_bindings[0]
+            .name,
+        "BLOCK_SIZE"
+    );
+    assert!(
+        decoded.trait_surface_map.type_surfaces[0].trait_surfaces[0]
+            .cfg_attrs
+            .contains(&"#[cfg(feature = \"std\")]".to_string())
+    );
 }
 
 #[test]

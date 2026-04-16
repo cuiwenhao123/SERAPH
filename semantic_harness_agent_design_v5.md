@@ -175,7 +175,7 @@ flowchart TD
     end
 
     subgraph Phase2["Phase 2: 语义建模"]
-        K --> M["models.json<br/>FCG / SLM / Contract / Risk"]
+        K --> M["models.json<br/>FCG / SLM / Contract / Risk / Trait Surface"]
     end
 
     subgraph Phase3["Phase 3: 外部编排 + Skills 合成"]
@@ -700,7 +700,580 @@ Risk Surface Map 是对原始风险面数据的语义化重排，供 Stage 1、S
 }
 ```
 
-### 5.5 Custom Type Synthesis Strategy (CTS)
+### 5.5 Trait Surface Map
+
+`trait_surface_map` 是 Phase 2 的“trait 能力摘要层”。
+
+它的目标不是替代 Phase 1 的 `trait_impl_registry`，也不是把 trait impl 重新塞回 `FCG`，
+而是以 **public nominal type** 为中心，把该类型通过 trait impl 暴露出来的、对外部使用者真正有意义的能力面整理成稳定语义视图。
+
+#### 为什么需要单独的 trait surface 层
+
+在 Rust 中，一个 public type 的实际能力并不只来自其 inherent API，还来自它实现的 trait。
+
+例如：
+
+- `Default` 提供额外构造通道
+- `From` / `TryFrom` 提供类型间转换入口
+- `IntoIterator` 提供迭代使用面
+- `Deref` / `AsRef` / `Borrow` 提供借用与适配语义
+- `Read` / `Write` / `fmt::Write` 提供 I/O 或格式化生态接入
+- crate-local trait（如 `Buf` / `BufMut`）则直接定义该类型在领域内的核心协议能力
+
+这些能力对测试生成、planner、示例选择和调用策略都有实际意义，
+但它们并不适合直接塞进 `FCG`。
+
+`FCG` 的职责仍然是表达 **API capability flow**：
+“有哪些 API 入口、会进入哪些对象能力链、对象之间如何流转”。
+
+`trait_surface_map` 的职责则是表达 **type-centered trait capability summary**：
+“拿到这个 public type 后，它还天然具备哪些 trait 驱动的能力面”。
+
+因此：
+
+- `FCG` 回答：这个库有哪些 API 使用流
+- `trait_surface_map` 回答：这个 public type 还具备哪些 trait 能力面
+
+#### 边界定义
+
+`trait_surface_map`：
+
+- 只面向 public nominal type 建模
+- 只基于已显式抽取到的 impl facts 建模
+- 只提升“对外部使用者有意义”的 trait surface
+- 不做推理式补全
+- 不强行把所有兼容性 trait 都纳入摘要层
+
+它明确不负责：
+
+- 不替代 `knowledge.trait_impl_registry`
+- 不替代 `FCG`
+- 不构建“所有 impl 的全量镜像”
+- 不把 `PartialEq` / `Eq` / `Hash` / `Send` / `Sync` 这类低权重兼容性 trait 默认抬升为 Phase 2 摘要能力卡
+
+#### 顶层结构
+
+`models.json` 顶层新增并行 section：
+
+```json
+{
+  "fcg": { ... },
+  "slm": [ ... ],
+  "api_contracts": [ ... ],
+  "risk_surface_map": { ... },
+  "trait_surface_map": {
+    "type_surfaces": [ ... ]
+  }
+}
+```
+
+对应 Rust 结构建议为：
+
+```rust
+pub struct Models {
+    pub fcg: FunctionalCapabilityGraph,
+    pub slm: Vec<StateLifecycleModel>,
+    pub api_contracts: Vec<ApiContract>,
+    pub risk_surface_map: RiskSurfaceMap,
+    pub trait_surface_map: TraitSurfaceMap,
+}
+
+pub struct TraitSurfaceMap {
+    pub type_surfaces: Vec<TypeTraitSurface>,
+}
+
+pub struct TypeTraitSurface {
+    pub type_id: TypeId,
+    pub path: String,
+    pub trait_surfaces: Vec<TraitSurfaceEntry>,
+}
+
+pub struct TraitSurfaceEntry {
+    pub trait_impl_id: TraitImplId,
+    pub trait_id: TraitId,
+    pub trait_name: String,
+    pub trait_path: String,
+    pub trait_origin: TraitOrigin,
+    pub for_type_text: String,
+    pub surface_kind: TraitSurfaceKind,
+    pub significance: TraitSurfaceSignificance,
+    pub capability_summary: String,
+    pub trait_method_api_ids: Vec<ApiId>,
+    pub associated_type_bindings: Vec<TraitAssociatedTypeBinding>,
+    pub associated_const_bindings: Vec<TraitAssociatedConstBinding>,
+    pub cfg_attrs: Vec<String>,
+    pub is_unsafe: bool,
+}
+```
+
+#### 字段语义说明
+
+- `type_id`
+  - 该 trait surface 所属的 public type 的稳定主键
+  - 是与 `FCG`、`SLM`、`Risk` 等模型做 join 的正式键
+
+- `path`
+  - 该 type 的 canonical path
+  - 仅用于阅读与调试
+  - 不应替代 `type_id` 做结构关联
+
+- `trait_impl_id`
+  - 指向 Phase 1 中某条具体 impl fact
+  - 是 `trait_surface_map` 与 `knowledge.trait_impl_registry` 对齐的回溯键
+
+- `trait_id`
+  - 指向被实现 trait 的稳定节点
+  - 区分于 `trait_impl_id`
+  - `trait_id` 代表“哪个 trait”
+  - `trait_impl_id` 代表“哪条 impl”
+
+- `trait_name`
+  - 短 trait 名
+  - 如 `BufMut`、`IntoIterator`、`Default`
+
+- `trait_path`
+  - trait 的 canonical path
+  - 如 `bytes::buf::buf_mut::BufMut`
+  - 或 `core::iter::traits::collect::IntoIterator`
+
+- `trait_origin`
+  - trait 相对于当前 crate 的来源
+  - 用于区分是 crate-local trait，还是外部生态 trait
+  - 它不是 impl 的可见性，也不是 type 的来源
+
+- `for_type_text`
+  - impl header 中 `for` 一侧的原始渲染文本
+  - 保留源码呈现方式，便于审计
+  - 它不是规范化后的 `type_id`
+
+- `surface_kind`
+  - 回答“这条 trait surface 属于哪类能力面”
+  - 是能力类别，不是重要性评分
+
+- `significance`
+  - 回答“这条 trait surface 是否足够重要，值得进入 Phase 2 摘要层”
+  - 是摘要层重要性，不是风险等级
+
+- `capability_summary`
+  - 面向人和后续 planner 的简短语义摘要
+  - 是规则生成文本，不是原始 docs 抽取
+
+- `trait_method_api_ids`
+  - 当 trait 是本地 trait，且其 trait methods 已进入 Phase 1 API 表时，
+    这里存放对应的 `api_id`
+  - 例如 `BufMut` 可关联到 `writer / limit / chain_mut`
+  - 外部 trait 如 `Default` / `From` 通常为空
+  - 该字段表达“这条 trait surface 对应了哪些已知 API 面”
+  - 它不是“impl 块里手写了哪些方法”
+
+- `associated_type_bindings`
+  - impl block 中的 associated type 赋值
+  - 例如 `IntoIterator::IntoIter = IntoIter<Bytes>`
+  - 它是解释 trait 语义的重要结构化证据
+
+- `associated_const_bindings`
+  - impl block 中的 associated const 赋值
+  - 第一版通常较少，但保留统一 schema
+
+- `cfg_attrs`
+  - impl block 上的原始 `cfg` / `cfg_attr` 文本
+  - 表达该 trait surface 是否受 feature / 平台条件控制
+  - 保留原始事实，不做过度规约
+
+- `is_unsafe`
+  - 该 impl header 是否为 `unsafe impl`
+  - 表达 trait surface 自身的安全语义强度
+  - 不等同于 type 是否 unsafe，也不等于函数体内是否存在 unsafe block
+
+#### surface_kind 分类建议
+
+```rust
+pub enum TraitSurfaceKind {
+    DomainTrait,
+    Iteration,
+    Construction,
+    Adapter,
+    IoAdapter,
+    MutationExtension,
+    Serialization,
+    Operator,
+}
+```
+
+建议含义如下：
+
+- `DomainTrait`
+  - crate-local 或领域核心协议 trait
+  - 例如 `Buf`、`BufMut`
+
+- `Iteration`
+  - 让类型进入迭代语义面
+  - 例如 `IntoIterator`、`Iterator`
+
+- `Construction`
+  - 提供额外构造 / 建立实例通道
+  - 例如 `Default`、`From<_>`、`TryFrom<_>`、`FromIterator<_>`
+
+- `Adapter`
+  - 提供借用、视图、引用适配
+  - 例如 `Deref`、`DerefMut`、`AsRef`、`AsMut`、`Borrow`、`BorrowMut`
+
+- `IoAdapter`
+  - 提供 I/O 或格式化协议接入
+  - 例如 `Read`、`Write`、`BufRead`、`Seek`、`fmt::Write`
+
+- `MutationExtension`
+  - 提供增量扩展、批量写入、聚合型修改能力
+  - 例如 `Extend<_>`
+
+- `Serialization`
+  - 提供序列化生态接入
+  - 例如 `Serialize`、`Deserialize`
+
+- `Operator`
+  - 提供运算符或组合语义
+  - 例如 `BitOr`、`Add`、`Sub`
+
+#### significance 取值建议
+
+```rust
+pub enum TraitSurfaceSignificance {
+    High,
+    Medium,
+}
+```
+
+第一版建议不保留 `Low`。
+
+原因：
+
+- `trait_surface_map` 的目标是“摘要层”
+- 低权重 trait impl 应继续留在 Phase 1 原始事实中
+- 如果把 `Low` 也塞进来，这一层很容易退化成 `trait_impl_registry` 的重复镜像
+
+建议提升规则：
+
+- `High`
+  - 对外部使用方式有显著影响的 trait surface
+  - 例如：
+    - crate-local 核心协议 trait
+    - `Buf`
+    - `BufMut`
+    - `IntoIterator`
+    - `Iterator`
+    - `Read`
+    - `Write`
+    - `BufRead`
+    - `Seek`
+
+- `Medium`
+  - 有明确实用价值，但更偏补充能力或生态接入
+  - 例如：
+    - `Default`
+    - `From`
+    - `TryFrom`
+    - `FromIterator`
+    - `Deref`
+    - `AsRef`
+    - `Borrow`
+    - `Extend`
+    - `fmt::Write`
+    - `Serialize`
+    - `Deserialize`
+
+- 不进入 `trait_surface_map`
+  - 仅保留在 Phase 1 原始 impl facts 中
+  - 例如：
+    - `PartialEq`
+    - `Eq`
+    - `PartialOrd`
+    - `Ord`
+    - `Hash`
+    - `Debug`
+    - `Display`
+    - `LowerHex`
+    - `UpperHex`
+    - `Send`
+    - `Sync`
+
+#### 与 FCG 的关系
+
+`trait_surface_map` 与 `FCG` 是互补关系，而不是包含关系。
+
+- `FCG` 继续只表达 API capability flow
+- `trait_surface_map` 只表达 type-centered trait capability summary
+
+两者可以共享：
+
+- `type_id`
+- `trait_id`
+- `api_id`
+- `anchor` 坐标体系中的 type 维度
+
+但不应互相吞并。
+
+特别是：
+
+- 不把所有 trait surface 直接展开成 FCG capability 节点
+- 不要求 FCG 对每个 impl 都建边
+- 仅在已有明确价值时，允许少量规则复用 `trait_surface_map` 的结论辅助 planner
+
+#### 与 Stage 1 / Stage 2 / Stage 3 的消费关系
+
+`trait_surface_map` 的主要消费者不是 Stage 1 的 capability 选择器，而是后续更细粒度的 planner 与 codegen 环节。
+
+原因是：
+
+- Stage 1 关注“选哪条能力链”
+- `FCG` 已足够回答“从哪里进入、会流向哪里”
+- `trait_surface_map` 更适合回答“拿到这个 type 之后，还可以按什么 trait 语义去使用它”
+
+因此推荐消费策略如下：
+
+##### Stage 1
+
+Stage 1 默认**不直接消费** `trait_surface_map` 主体。
+
+原因：
+
+- 避免 Stage 1 输入过大
+- 避免在 capability 选择阶段同时混入过多 trait 兼容性信息
+- 保持 Stage 1 仍以 `FCG` 的 capability card 为主
+
+可选地，Stage 1 只允许读取极简摘要，例如：
+
+- 某个已选 capability 对应 type 是否存在 `high` significance trait surface
+- 若存在，可在 capability 描述中附加一句非常短的提示
+
+例如：
+
+- `BytesMut 修改；附加 trait surface：BufMut / IntoIterator`
+- `Reader 查询；附加 trait surface：Read`
+
+但这类提示应是可选增强，不应替代 `FCG.stage1_summary`。
+
+##### Stage 1.5 / Stage 2
+
+`trait_surface_map` 的核心消费位置应放在 Stage 1.5 和 Stage 2。
+
+因为这两个阶段已经从“选能力”进入“映射 API / 规划调用”的层级，
+需要知道某个 public type 的可用语义面到底有哪些。
+
+推荐用法：
+
+- 当 `scenario-api-mapper` 已经选中某个 type 相关 capability 时，
+  可读取该 type 的 `trait_surfaces`
+- 若存在 `high` / `medium` significance surface，
+  则把这些 trait surface 作为“补充使用面”提供给 `api-planner`
+
+例如：
+
+- `BytesMut`
+  - inherent API 面：`reserve` / `split` / `freeze`
+  - trait surface 面：`BufMut` / `IntoIterator` / `fmt::Write`
+- `Bytes`
+  - inherent API 面：`slice` / `split_to` / `try_into_mut`
+  - trait surface 面：`Buf` / `IntoIterator` / `Deref<[u8]>`
+
+这样 planner 就能显式知道：
+
+- 这个类型是否支持被当作 buffer source / sink 使用
+- 是否适合作为 iterator source
+- 是否具备 format / write 语义
+- 是否存在额外构造通道（`Default` / `From` / `FromIterator`）
+
+##### Stage 3
+
+`trait_surface_map` 对 Stage 3 的主要价值是指导 harness 生成策略。
+
+典型作用：
+
+- 若 type 具有 `iteration` surface，可优先生成迭代消费路径
+- 若 type 具有 `io_adapter` surface，可生成 `Read` / `Write` / `fmt::Write` 风格 harness
+- 若 type 具有 `construction` surface，可补充 `Default` / `From` / `FromIterator` 等备用构造方式
+- 若 type 具有 crate-local `domain_trait` surface，可优先调用该协议面下的 trait methods
+
+也就是说：
+
+- `FCG` 决定“从哪个能力入口进入”
+- `trait_surface_map` 决定“进入某个 type 后，还可沿哪些 trait 语义面展开”
+
+##### Stage 4
+
+`trait_surface_map` 对 compile-fixer 的主要价值是“修复时不丢语义面”。
+
+例如：
+
+- harness 本来在用 `BytesMut` 的 `BufMut` 语义
+- 编译修复阶段不能因为更容易通过编译，就把它退化成完全不同的普通 `Vec<u8>` 使用方式
+- 若 `api_plan` 或 harness 草稿中已经显式选择了某个 trait surface，
+  compile-fixer 应优先保留该 surface，不应随意切换到无关语义面
+
+因此它在 Stage 4 中更像“语义护栏”，而不是主驱动输入。
+
+#### Phase 2 构建规则建议
+
+`trait_surface_map` 的 builder 建议遵循以下保守规则：
+
+1. 输入来源
+   - 只读取 `knowledge.trait_impl_registry`
+   - 可辅助读取 `knowledge.trait_registry`
+   - 可辅助读取 `knowledge.apis`
+   - 不从 docs prose 做额外推断
+
+2. 锚点规则
+   - 仅为 public nominal type 建立 `TypeTraitSurface`
+   - 非 nominal implementor 不单独建顶层 surface 节点
+   - 例如 `&[u8]`、`&mut [u8]`、`Vec<u8>` 这类外部或非本地 nominal type 不作为主 type surface 输出
+
+3. 进入摘要层的筛选规则
+   - 只有被判定为 `high` / `medium` significance 的 impl 才进入 `trait_surface_map`
+   - 其他 impl 仍保留在 `knowledge.trait_impl_registry`
+
+4. method 关联规则
+   - 对 crate-local trait，可将 trait methods 回连到已知 `api_id`
+   - 对外部 trait，通常不强求 `trait_method_api_ids`
+
+5. 保守性原则
+   - 允许漏收录
+   - 不允许把明显低价值兼容性 impl 大量误抬升
+   - 不允许凭名称猜测不存在的 trait surface 语义
+
+#### 与 Phase 1 的关系
+
+Phase 1 继续保留完整原始事实：
+
+- `trait_registry`
+- `trait_impl_registry`
+
+Phase 2 中：
+
+- `trait_surface_map` 是“摘要层”
+- `knowledge.trait_impl_registry` 是“审计层原始事实”
+
+两者应并存，而不是相互替代。
+
+这意味着：
+
+- 若下游需要简洁语义摘要，读取 `trait_surface_map`
+- 若下游需要逐条 impl 精确审计，读取 `knowledge.trait_impl_registry`
+
+#### 设计收益
+
+引入 `trait_surface_map` 后，可以同时满足三个目标：
+
+1. 保持 `FCG` 简洁
+   - 不把 trait impl 继续揉进 capability graph
+
+2. 保留 Rust trait 语义的重要能力面
+   - 避免 `bytes` 这类 crate 的真实能力被严重低估
+
+3. 保持 Phase 2 仍是“摘要层”
+   - 不把 `models.json` 退化成 Phase 1 原始事实的复制品
+
+#### 落地顺序建议
+
+`trait_surface_map` 建议按“三步最小闭环”落地，而不是一次性做大全。
+
+##### Step 1: 先落 schema，不做复杂规则
+
+先在 `seraph-types` 中补齐 `models.json` 顶层 schema：
+
+- `Models.trait_surface_map`
+- `TraitSurfaceMap`
+- `TypeTraitSurface`
+- `TraitSurfaceEntry`
+- `TraitSurfaceKind`
+- `TraitSurfaceSignificance`
+
+这一阶段只要求：
+
+- schema 可序列化 / 反序列化
+- roundtrip 测试通过
+- `minimal_models.json` 能稳定包含空的 `trait_surface_map`
+
+目标是先把契约冻结，避免 builder 做完后再反复改结构。
+
+##### Step 2: 再做最小 builder
+
+在 `s3-model` 中新增独立 builder，例如：
+
+- `crates/s3-model/src/trait_surface.rs`
+
+第一版 builder 只做以下最小规则：
+
+1. 从 `knowledge.trait_impl_registry` 读取 impl facts
+2. 按 `target_type_id` 聚合
+3. 只保留 `high` / `medium` significance surface
+4. 只为 public nominal type 输出 `TypeTraitSurface`
+5. 对 crate-local trait，尝试把 trait methods 回连到 `api_id`
+6. 对外部 trait，允许 `trait_method_api_ids = []`
+7. `capability_summary` 使用确定性规则生成，不引入 LLM
+
+这一版不要做：
+
+- 反向 trait→implementor 总表
+- 复杂跨模型推理
+- 自动补全未显式抽取到的 impl
+- 过多 bucket 细分
+
+目标是先形成稳定、可验证的最小摘要层。
+
+##### Step 3: 用真实 crate 做回归审计
+
+第一轮建议至少跑 3 类真实 crate：
+
+1. `bytes`
+   - 验证 crate-local trait surface
+   - 重点看：
+     - `Bytes: Buf`
+     - `BytesMut: BufMut`
+     - `IntoIterator`
+     - `fmt::Write`
+     - `Default`
+     - `Deref` / `AsRef`
+   - 同时确认：
+     - `Eq` / `Hash` / `Send` / `Sync` 不被误提升
+
+2. `hashbrown`
+   - 验证大量 trait impl 下的筛选是否稳
+   - 重点看：
+     - `FromIterator`
+     - `Extend`
+     - `IntoIterator`
+     - 运算符类 impl 是否按预期进入或被过滤
+   - 同时确认不会退化成“把所有 impl 全塞进摘要层”
+
+3. `moonfire-ffmpeg` 或其他带 `cfg` / `unsafe impl` 的 crate
+   - 验证：
+     - `cfg_attrs` 是否保留
+     - `is_unsafe` 是否对得上真实 impl header
+     - 外部 trait surface 是否能正确保留来源与条件信息
+
+##### 验收标准
+
+`trait_surface_map` 第一版完成时，应满足：
+
+- schema 稳定
+- builder 规则确定
+- `cargo test -p seraph-types -p s3-model` 通过
+- 至少 3 个真实 crate 审计通过
+- `bytes` 这类 crate 的 trait 驱动能力面不再完全依赖人工阅读源码才能看出来
+- `FCG` 本身不被重新复杂化
+
+##### 明确暂不做的事
+
+第一版 `trait_surface_map` 暂不包括：
+
+- trait→implementor 反向全表
+- 所有低权重兼容性 trait 的完整镜像
+- 基于 docs prose 的 trait 能力推断
+- 基于外部常识自动补全缺失 impl
+- 和 `FCG` 的节点级融合
+
+这些内容如果未来需要，可作为 `trait_surface_map v2` 再扩展，而不是在第一版混入。
+
+### 5.6 Custom Type Synthesis Strategy (CTS)
 
 CTS 在 v5 中仍然不是独立的顶层文件，而是：
 
@@ -733,7 +1306,7 @@ CTS 在 v5 中仍然不是独立的顶层文件，而是：
 | 1 | `scenario-generator` | `models.fcg.stage1_summary`、风险摘要、`coverage.next_priority`、未覆盖 API 名称提示 | `scenario.json` | 定义场景与 capability 选择 |
 | 1.5 | `scenario-api-mapper` | `scenario.json`、已选 capability 卡片详情、Level 1 类型锚点概览（与 FCG 共用 anchor 坐标）、`capability_api_index`、未覆盖 API 详情 | `api_mapping.json` | capability→API 映射 |
 | split | `s3-context --split-mapping` | `api_mapping.json` | `sub_mapping_*.json` | 语义闭包分批 |
-| 2 | `api-planner` | `sub_mapping`、Level 2/3、SLM、Contract、Trait 定义 | `api_plan_XX.json` | 有序调用计划 |
+| 2 | `api-planner` | `sub_mapping`、Level 2/3、SLM、Contract、Trait Surface、Trait 定义 | `api_plan_XX.json` | 有序调用计划 |
 | 3 | `harness-codegen` | `api_plan_XX.json`、Level 3、examples、风险标注、SLM 简化版 | `harness_RRR_SS.rs` | 生成 harness |
 | 4 | `compile-fixer` | harness、rustc 输出、`api_plan_XX.json`、相关签名、SLM 简化版 | 修复后的 harness | 修复编译错误但不破坏语义 |
 | 5 | `s3-coverage --validate` | smoke run 输出 | `coverage.json` 更新 | 外部验证与反馈 |
@@ -893,6 +1466,7 @@ Stage 1.5 不再只拿“模块 + API 名称列表”去猜测映射，而是显
 - `knowledge.level_3_apis`
 - `models.slm`
 - `models.api_contracts`
+- `models.trait_surface_map`
 - `knowledge.trait_registry`
 - `knowledge.trait_impl_registry`（如需判断 public impl surface / known implementors）
 
@@ -1254,6 +1828,7 @@ SERAPH/
 - `knowledge.level_3_apis`
 - `models.slm`
 - `models.api_contracts`
+- `models.trait_surface_map`
 - `knowledge.trait_registry`
 - `knowledge.trait_impl_registry`
 

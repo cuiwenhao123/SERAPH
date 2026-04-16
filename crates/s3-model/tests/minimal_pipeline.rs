@@ -45,6 +45,7 @@ fn build_models_from_knowledge_returns_phase2_sections() {
     assert!(models.slm.is_empty());
     assert!(models.api_contracts.is_empty());
     assert!(models.risk_surface_map.api_risks.is_empty());
+    assert!(models.trait_surface_map.type_surfaces.is_empty());
 }
 
 #[test]
@@ -528,6 +529,563 @@ fn fcg_does_not_promote_helper_free_functions_to_module_entry_construction() {
 }
 
 #[test]
+fn fcg_classifies_self_consuming_cross_type_methods_as_conversion() {
+    let mut knowledge = fixture_knowledge();
+
+    knowledge.types.push(seraph_types::TypeInfo {
+        type_id: seraph_types::TypeId::from("type::demo::bytes::BytesMut"),
+        name: "BytesMut".into(),
+        canonical_path: "demo::bytes::BytesMut".into(),
+        public_paths: vec!["demo::bytes::BytesMut".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::bytes"),
+        code_ref: CodeRef {
+            file: "src/bytes.rs".into(),
+            start_line: 1,
+            end_line: 8,
+        },
+        docs: "Growable bytes.".into(),
+        doc_sections: DocSections::default(),
+        kind: seraph_types::TypeKind::Struct,
+        generic_params: vec![],
+        where_clauses: vec![],
+        is_non_exhaustive: false,
+        fields: vec![],
+        variants: vec![],
+        has_hidden_fields: false,
+        has_hidden_variants: false,
+    });
+    knowledge.types.push(seraph_types::TypeInfo {
+        type_id: seraph_types::TypeId::from("type::demo::bytes::Bytes"),
+        name: "Bytes".into(),
+        canonical_path: "demo::bytes::Bytes".into(),
+        public_paths: vec!["demo::bytes::Bytes".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::bytes"),
+        code_ref: CodeRef {
+            file: "src/bytes.rs".into(),
+            start_line: 10,
+            end_line: 18,
+        },
+        docs: "Frozen bytes.".into(),
+        doc_sections: DocSections::default(),
+        kind: seraph_types::TypeKind::Struct,
+        generic_params: vec![],
+        where_clauses: vec![],
+        is_non_exhaustive: false,
+        fields: vec![],
+        variants: vec![],
+        has_hidden_fields: false,
+        has_hidden_variants: false,
+    });
+
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::bytes::BytesMut::freeze"),
+        name: "freeze".into(),
+        canonical_path: "demo::bytes::BytesMut::freeze".into(),
+        public_paths: vec!["demo::bytes::BytesMut::freeze".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::bytes"),
+        owner_type_id: Some(seraph_types::TypeId::from("type::demo::bytes::BytesMut")),
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/bytes.rs".into(),
+            start_line: 20,
+            end_line: 20,
+        },
+        docs: "Freeze into immutable bytes.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::InherentMethod,
+        signature_text: "pub fn freeze(self) -> Bytes".into(),
+        receiver: Some("Self".into()),
+        generic_params: vec![],
+        where_clauses: vec![],
+        arg_types: vec![],
+        return_type: Some("Bytes".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Nominal,
+            inner_types: vec![],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::bytes::Bytes::try_into_mut"),
+        name: "try_into_mut".into(),
+        canonical_path: "demo::bytes::Bytes::try_into_mut".into(),
+        public_paths: vec!["demo::bytes::Bytes::try_into_mut".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::bytes"),
+        owner_type_id: Some(seraph_types::TypeId::from("type::demo::bytes::Bytes")),
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/bytes.rs".into(),
+            start_line: 22,
+            end_line: 22,
+        },
+        docs: "Try to recover mutable bytes.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::InherentMethod,
+        signature_text: "pub fn try_into_mut(self) -> Result<BytesMut, Bytes>".into(),
+        receiver: Some("Self".into()),
+        generic_params: vec![],
+        where_clauses: vec![],
+        arg_types: vec![],
+        return_type: Some("Result<BytesMut, Bytes>".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Result,
+            inner_types: vec!["BytesMut".into(), "Bytes".into()],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::bytes::Bytes::len"),
+        name: "len".into(),
+        canonical_path: "demo::bytes::Bytes::len".into(),
+        public_paths: vec!["demo::bytes::Bytes::len".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::bytes"),
+        owner_type_id: Some(seraph_types::TypeId::from("type::demo::bytes::Bytes")),
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/bytes.rs".into(),
+            start_line: 24,
+            end_line: 24,
+        },
+        docs: "Returns length.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::InherentMethod,
+        signature_text: "pub fn len(&self) -> usize".into(),
+        receiver: Some("&self".into()),
+        generic_params: vec![],
+        where_clauses: vec![],
+        arg_types: vec![],
+        return_type: Some("usize".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Primitive,
+            inner_types: vec![],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::bytes::BytesMut::capacity"),
+        name: "capacity".into(),
+        canonical_path: "demo::bytes::BytesMut::capacity".into(),
+        public_paths: vec!["demo::bytes::BytesMut::capacity".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::bytes"),
+        owner_type_id: Some(seraph_types::TypeId::from("type::demo::bytes::BytesMut")),
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/bytes.rs".into(),
+            start_line: 26,
+            end_line: 26,
+        },
+        docs: "Returns capacity.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::InherentMethod,
+        signature_text: "pub fn capacity(&self) -> usize".into(),
+        receiver: Some("&self".into()),
+        generic_params: vec![],
+        where_clauses: vec![],
+        arg_types: vec![],
+        return_type: Some("usize".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Primitive,
+            inner_types: vec![],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+
+    let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
+    let bytes_mut_conversion = models
+        .fcg
+        .capability_api_index
+        .get(&seraph_types::CapId::from("cap::demo::bytes::BytesMut::conversion"))
+        .unwrap();
+    assert_eq!(
+        bytes_mut_conversion,
+        &vec![seraph_types::ApiId::from("api::demo::bytes::BytesMut::freeze")]
+    );
+
+    let bytes_conversion = models
+        .fcg
+        .capability_api_index
+        .get(&seraph_types::CapId::from("cap::demo::bytes::Bytes::conversion"))
+        .unwrap();
+    assert_eq!(
+        bytes_conversion,
+        &vec![seraph_types::ApiId::from("api::demo::bytes::Bytes::try_into_mut")]
+    );
+
+    let bytes_query = models
+        .fcg
+        .capability_api_index
+        .get(&seraph_types::CapId::from("cap::demo::bytes::Bytes::query"))
+        .unwrap();
+    assert_eq!(
+        bytes_query,
+        &vec![seraph_types::ApiId::from("api::demo::bytes::Bytes::len")]
+    );
+
+    let bytes_mut_query = models
+        .fcg
+        .capability_api_index
+        .get(&seraph_types::CapId::from("cap::demo::bytes::BytesMut::query"))
+        .unwrap();
+    assert_eq!(
+        bytes_mut_query,
+        &vec![seraph_types::ApiId::from("api::demo::bytes::BytesMut::capacity")]
+    );
+
+    let bytes_mut_cap = models
+        .fcg
+        .capabilities
+        .iter()
+        .find(|cap| cap.cap_id == seraph_types::CapId::from("cap::demo::bytes::BytesMut::conversion"))
+        .unwrap();
+    assert!(
+        bytes_mut_cap
+            .connects_to
+            .contains(&seraph_types::CapId::from("cap::demo::bytes::Bytes::query"))
+    );
+
+    let bytes_cap = models
+        .fcg
+        .capabilities
+        .iter()
+        .find(|cap| cap.cap_id == seraph_types::CapId::from("cap::demo::bytes::Bytes::conversion"))
+        .unwrap();
+    assert!(
+        bytes_cap
+            .connects_to
+            .contains(&seraph_types::CapId::from("cap::demo::bytes::BytesMut::query"))
+    );
+}
+
+#[test]
+fn fcg_classifies_self_consuming_adapter_trait_methods_as_conversion() {
+    let mut knowledge = fixture_knowledge();
+
+    knowledge.types.push(seraph_types::TypeInfo {
+        type_id: seraph_types::TypeId::from("type::demo::buf::Reader"),
+        name: "Reader".into(),
+        canonical_path: "demo::buf::Reader".into(),
+        public_paths: vec!["demo::buf::Reader".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::buf"),
+        code_ref: CodeRef {
+            file: "src/buf.rs".into(),
+            start_line: 1,
+            end_line: 8,
+        },
+        docs: "Reader adapter.".into(),
+        doc_sections: DocSections::default(),
+        kind: seraph_types::TypeKind::Struct,
+        generic_params: vec!["T".into()],
+        where_clauses: vec![],
+        is_non_exhaustive: false,
+        fields: vec![],
+        variants: vec![],
+        has_hidden_fields: false,
+        has_hidden_variants: false,
+    });
+    knowledge.types.push(seraph_types::TypeInfo {
+        type_id: seraph_types::TypeId::from("type::demo::buf::Writer"),
+        name: "Writer".into(),
+        canonical_path: "demo::buf::Writer".into(),
+        public_paths: vec!["demo::buf::Writer".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::buf"),
+        code_ref: CodeRef {
+            file: "src/buf.rs".into(),
+            start_line: 10,
+            end_line: 18,
+        },
+        docs: "Writer adapter.".into(),
+        doc_sections: DocSections::default(),
+        kind: seraph_types::TypeKind::Struct,
+        generic_params: vec!["T".into()],
+        where_clauses: vec![],
+        is_non_exhaustive: false,
+        fields: vec![],
+        variants: vec![],
+        has_hidden_fields: false,
+        has_hidden_variants: false,
+    });
+    knowledge.types.push(seraph_types::TypeInfo {
+        type_id: seraph_types::TypeId::from("type::demo::buf::Chain"),
+        name: "Chain".into(),
+        canonical_path: "demo::buf::Chain".into(),
+        public_paths: vec!["demo::buf::Chain".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::buf"),
+        code_ref: CodeRef {
+            file: "src/buf.rs".into(),
+            start_line: 20,
+            end_line: 28,
+        },
+        docs: "Chain adapter.".into(),
+        doc_sections: DocSections::default(),
+        kind: seraph_types::TypeKind::Struct,
+        generic_params: vec!["T".into(), "U".into()],
+        where_clauses: vec![],
+        is_non_exhaustive: false,
+        fields: vec![],
+        variants: vec![],
+        has_hidden_fields: false,
+        has_hidden_variants: false,
+    });
+
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::buf::Buf::reader"),
+        name: "reader".into(),
+        canonical_path: "demo::buf::Buf::reader".into(),
+        public_paths: vec!["demo::buf::Buf::reader".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::buf"),
+        owner_type_id: None,
+        owner_trait_id: Some(seraph_types::TraitId::from("trait::demo::buf::Buf")),
+        code_ref: CodeRef {
+            file: "src/buf.rs".into(),
+            start_line: 30,
+            end_line: 30,
+        },
+        docs: "Turns a buffer into a reader.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::TraitMethod,
+        signature_text: "fn reader(self) -> Reader<Self> where Self: Sized".into(),
+        receiver: Some("Self".into()),
+        generic_params: vec![],
+        where_clauses: vec!["Self: Sized".into()],
+        arg_types: vec![],
+        return_type: Some("Reader<Self>".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Nominal,
+            inner_types: vec!["Self".into()],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::buf::BufMut::writer"),
+        name: "writer".into(),
+        canonical_path: "demo::buf::BufMut::writer".into(),
+        public_paths: vec!["demo::buf::BufMut::writer".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::buf"),
+        owner_type_id: None,
+        owner_trait_id: Some(seraph_types::TraitId::from("trait::demo::buf::BufMut")),
+        code_ref: CodeRef {
+            file: "src/buf.rs".into(),
+            start_line: 32,
+            end_line: 32,
+        },
+        docs: "Turns a buffer into a writer.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::TraitMethod,
+        signature_text: "fn writer(self) -> Writer<Self> where Self: Sized".into(),
+        receiver: Some("Self".into()),
+        generic_params: vec![],
+        where_clauses: vec!["Self: Sized".into()],
+        arg_types: vec![],
+        return_type: Some("Writer<Self>".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Nominal,
+            inner_types: vec!["Self".into()],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::buf::BufMut::chain_mut"),
+        name: "chain_mut".into(),
+        canonical_path: "demo::buf::BufMut::chain_mut".into(),
+        public_paths: vec!["demo::buf::BufMut::chain_mut".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::buf"),
+        owner_type_id: None,
+        owner_trait_id: Some(seraph_types::TraitId::from("trait::demo::buf::BufMut")),
+        code_ref: CodeRef {
+            file: "src/buf.rs".into(),
+            start_line: 34,
+            end_line: 34,
+        },
+        docs: "Chains writable buffers.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::TraitMethod,
+        signature_text: "fn chain_mut<U>(self, next: U) -> Chain<Self, U> where Self: Sized".into(),
+        receiver: Some("Self".into()),
+        generic_params: vec!["U".into()],
+        where_clauses: vec!["Self: Sized".into()],
+        arg_types: vec!["U".into()],
+        return_type: Some("Chain<Self, U>".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Nominal,
+            inner_types: vec!["Self".into(), "U".into()],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::buf::Reader::get_ref"),
+        name: "get_ref".into(),
+        canonical_path: "demo::buf::Reader::get_ref".into(),
+        public_paths: vec!["demo::buf::Reader::get_ref".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::buf"),
+        owner_type_id: Some(seraph_types::TypeId::from("type::demo::buf::Reader")),
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/buf.rs".into(),
+            start_line: 36,
+            end_line: 36,
+        },
+        docs: "Borrow inner buffer.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::InherentMethod,
+        signature_text: "pub fn get_ref(&self) -> &T".into(),
+        receiver: Some("&self".into()),
+        generic_params: vec![],
+        where_clauses: vec![],
+        arg_types: vec![],
+        return_type: Some("&T".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Ref,
+            inner_types: vec!["T".into()],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::buf::Writer::get_ref"),
+        name: "get_ref".into(),
+        canonical_path: "demo::buf::Writer::get_ref".into(),
+        public_paths: vec!["demo::buf::Writer::get_ref".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::buf"),
+        owner_type_id: Some(seraph_types::TypeId::from("type::demo::buf::Writer")),
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/buf.rs".into(),
+            start_line: 38,
+            end_line: 38,
+        },
+        docs: "Borrow inner sink.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::InherentMethod,
+        signature_text: "pub fn get_ref(&self) -> &T".into(),
+        receiver: Some("&self".into()),
+        generic_params: vec![],
+        where_clauses: vec![],
+        arg_types: vec![],
+        return_type: Some("&T".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Ref,
+            inner_types: vec!["T".into()],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::buf::Chain::first_ref"),
+        name: "first_ref".into(),
+        canonical_path: "demo::buf::Chain::first_ref".into(),
+        public_paths: vec!["demo::buf::Chain::first_ref".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::buf"),
+        owner_type_id: Some(seraph_types::TypeId::from("type::demo::buf::Chain")),
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/buf.rs".into(),
+            start_line: 40,
+            end_line: 40,
+        },
+        docs: "Borrow first part.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::InherentMethod,
+        signature_text: "pub fn first_ref(&self) -> &T".into(),
+        receiver: Some("&self".into()),
+        generic_params: vec![],
+        where_clauses: vec![],
+        arg_types: vec![],
+        return_type: Some("&T".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Ref,
+            inner_types: vec!["T".into()],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+
+    let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
+    let module_conversion = models
+        .fcg
+        .capability_api_index
+        .get(&seraph_types::CapId::from("cap::demo::buf::module_entry::conversion"))
+        .unwrap();
+    assert!(module_conversion.contains(&seraph_types::ApiId::from(
+        "api::demo::buf::Buf::reader"
+    )));
+    assert!(module_conversion.contains(&seraph_types::ApiId::from(
+        "api::demo::buf::BufMut::writer"
+    )));
+    assert!(module_conversion.contains(&seraph_types::ApiId::from(
+        "api::demo::buf::BufMut::chain_mut"
+    )));
+
+    let module_query = models
+        .fcg
+        .capability_api_index
+        .get(&seraph_types::CapId::from("cap::demo::buf::module_entry::query"));
+    assert!(
+        module_query
+            .map(|apis| !apis.contains(&seraph_types::ApiId::from("api::demo::buf::Buf::reader")))
+            .unwrap_or(true)
+    );
+
+    let module_cap = models
+        .fcg
+        .capabilities
+        .iter()
+        .find(|cap| cap.cap_id == seraph_types::CapId::from("cap::demo::buf::module_entry::conversion"))
+        .unwrap();
+    assert!(
+        module_cap
+            .connects_to
+            .contains(&seraph_types::CapId::from("cap::demo::buf::Reader::query"))
+    );
+    assert!(
+        module_cap
+            .connects_to
+            .contains(&seraph_types::CapId::from("cap::demo::buf::Writer::query"))
+    );
+    assert!(
+        module_cap
+            .connects_to
+            .contains(&seraph_types::CapId::from("cap::demo::buf::Chain::query"))
+    );
+}
+
+#[test]
 fn slm_scores_stateful_types_and_emits_forbidden_transitions() {
     let knowledge = fixture_knowledge();
 
@@ -920,6 +1478,226 @@ fn contract_builder_separates_lifetime_params_from_synthesis_params() {
             .collect::<Vec<_>>(),
         vec!["R".to_string()]
     );
+}
+
+#[test]
+fn trait_surface_builder_emits_type_centered_trait_surfaces() {
+    let mut knowledge = fixture_knowledge();
+
+    let reader_ext_trait_id = seraph_types::TraitId::from("trait::demo::query::ReaderExt");
+    knowledge.trait_registry.push(seraph_types::TraitInfo {
+        trait_id: reader_ext_trait_id.clone(),
+        name: "ReaderExt".into(),
+        canonical_path: "demo::query::ReaderExt".into(),
+        public_paths: vec!["demo::query::ReaderExt".into()],
+        public_anchor_module_id: Some(seraph_types::ModuleId::from("mod::demo::query")),
+        code_ref: Some(CodeRef {
+            file: "src/query.rs".into(),
+            start_line: 82,
+            end_line: 88,
+        }),
+        docs: "Crate-local reader extension trait.".into(),
+        doc_sections: DocSections::default(),
+        origin: seraph_types::TraitOrigin::Local,
+        exposure_kinds: vec![seraph_types::TraitExposureKind::Defined],
+        is_unsafe: true,
+        direct_supertrait_ids: vec![],
+        required_methods: vec!["advance".into()],
+        provided_methods: vec![],
+        associated_type_defs: vec![],
+        associated_const_defs: vec![],
+        used_by_api_ids: vec![],
+        used_by_trait_ids: vec![],
+        used_by_type_ids: vec![],
+    });
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::query::ReaderExt::advance"),
+        name: "advance".into(),
+        canonical_path: "demo::query::ReaderExt::advance".into(),
+        public_paths: vec!["demo::query::ReaderExt::advance".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::query"),
+        owner_type_id: None,
+        owner_trait_id: Some(reader_ext_trait_id.clone()),
+        code_ref: CodeRef {
+            file: "src/query.rs".into(),
+            start_line: 84,
+            end_line: 84,
+        },
+        docs: "Advance the reader state.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::TraitMethod,
+        signature_text: "fn advance(&mut self)".into(),
+        receiver: Some("&mut self".into()),
+        generic_params: vec![],
+        where_clauses: vec![],
+        arg_types: vec![],
+        return_type: None,
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Unit,
+            inner_types: vec![],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: false,
+        contains_unsafe_block: false,
+    });
+    knowledge
+        .trait_impl_registry
+        .push(seraph_types::TraitImplInfo {
+            trait_impl_id: "trait_impl::demo::query::ReaderExt::for::Parser".into(),
+            target_type_id: seraph_types::TypeId::from("type::demo::query::Parser"),
+            trait_ref_text: "demo::query::ReaderExt".into(),
+            for_type_text: "Parser".into(),
+            trait_id: reader_ext_trait_id.clone(),
+            trait_name: "ReaderExt".into(),
+            trait_canonical_path: "demo::query::ReaderExt".into(),
+            trait_origin: seraph_types::TraitOrigin::Local,
+            source: CodeRef {
+                file: "src/query.rs".into(),
+                start_line: 90,
+                end_line: 94,
+            },
+            associated_type_bindings: vec![seraph_types::TraitAssociatedTypeBinding {
+                name: "Item".into(),
+                generic_params: vec![],
+                where_clauses: vec![],
+                bounds: vec![],
+                assigned_type: Some("u8".into()),
+                source: None,
+            }],
+            associated_const_bindings: vec![seraph_types::TraitAssociatedConstBinding {
+                name: "BLOCK_SIZE".into(),
+                value_text: Some("4096".into()),
+                source: None,
+            }],
+            where_clauses: vec![],
+            cfg_attrs: vec!["#[cfg(feature = \"std\")]".into()],
+            is_unsafe: true,
+        });
+
+    knowledge
+        .trait_impl_registry
+        .push(seraph_types::TraitImplInfo {
+            trait_impl_id:
+                "trait_impl::core::iter::traits::collect::IntoIterator::for::Document".into(),
+            target_type_id: seraph_types::TypeId::from("type::demo::query::Document"),
+            trait_ref_text: "core::iter::traits::collect::IntoIterator".into(),
+            for_type_text: "Document".into(),
+            trait_id: seraph_types::TraitId::from(
+                "trait::core::iter::traits::collect::IntoIterator",
+            ),
+            trait_name: "IntoIterator".into(),
+            trait_canonical_path: "core::iter::traits::collect::IntoIterator".into(),
+            trait_origin: seraph_types::TraitOrigin::External,
+            source: CodeRef {
+                file: "src/query.rs".into(),
+                start_line: 96,
+                end_line: 100,
+            },
+            associated_type_bindings: vec![
+                seraph_types::TraitAssociatedTypeBinding {
+                    name: "Item".into(),
+                    generic_params: vec![],
+                    where_clauses: vec![],
+                    bounds: vec![],
+                    assigned_type: Some("char".into()),
+                    source: None,
+                },
+                seraph_types::TraitAssociatedTypeBinding {
+                    name: "IntoIter".into(),
+                    generic_params: vec![],
+                    where_clauses: vec![],
+                    bounds: vec![],
+                    assigned_type: Some("demo::query::DocumentChars".into()),
+                    source: None,
+                },
+            ],
+            associated_const_bindings: vec![],
+            where_clauses: vec![],
+            cfg_attrs: vec![],
+            is_unsafe: false,
+        });
+
+    knowledge
+        .trait_impl_registry
+        .push(seraph_types::TraitImplInfo {
+            trait_impl_id: "trait_impl::core::fmt::Debug::for::Document".into(),
+            target_type_id: seraph_types::TypeId::from("type::demo::query::Document"),
+            trait_ref_text: "core::fmt::Debug".into(),
+            for_type_text: "Document".into(),
+            trait_id: seraph_types::TraitId::from("trait::core::fmt::Debug"),
+            trait_name: "Debug".into(),
+            trait_canonical_path: "core::fmt::Debug".into(),
+            trait_origin: seraph_types::TraitOrigin::External,
+            source: CodeRef {
+                file: "src/query.rs".into(),
+                start_line: 102,
+                end_line: 102,
+            },
+            associated_type_bindings: vec![],
+            associated_const_bindings: vec![],
+            where_clauses: vec![],
+            cfg_attrs: vec![],
+            is_unsafe: false,
+        });
+
+    let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
+
+    assert_eq!(models.trait_surface_map.type_surfaces.len(), 2);
+
+    let parser_surface = models
+        .trait_surface_map
+        .type_surfaces
+        .iter()
+        .find(|surface| surface.type_id == seraph_types::TypeId::from("type::demo::query::Parser"))
+        .unwrap();
+    let reader_ext = parser_surface
+        .trait_surfaces
+        .iter()
+        .find(|entry| entry.trait_name == "ReaderExt")
+        .unwrap();
+    assert_eq!(
+        reader_ext.surface_kind,
+        seraph_types::TraitSurfaceKind::DomainTrait
+    );
+    assert_eq!(
+        reader_ext.significance,
+        seraph_types::TraitSurfaceSignificance::High
+    );
+    assert_eq!(
+        reader_ext.trait_method_api_ids,
+        vec![seraph_types::ApiId::from("api::demo::query::ReaderExt::advance")]
+    );
+    assert_eq!(reader_ext.associated_type_bindings[0].name, "Item");
+    assert_eq!(reader_ext.associated_const_bindings[0].name, "BLOCK_SIZE");
+    assert_eq!(reader_ext.cfg_attrs, vec!["#[cfg(feature = \"std\")]"]);
+    assert!(reader_ext.is_unsafe);
+
+    let document_surface = models
+        .trait_surface_map
+        .type_surfaces
+        .iter()
+        .find(|surface| surface.type_id == seraph_types::TypeId::from("type::demo::query::Document"))
+        .unwrap();
+    let into_iter = document_surface
+        .trait_surfaces
+        .iter()
+        .find(|entry| entry.trait_name == "IntoIterator")
+        .unwrap();
+    assert_eq!(
+        into_iter.surface_kind,
+        seraph_types::TraitSurfaceKind::Iteration
+    );
+    assert_eq!(
+        into_iter.significance,
+        seraph_types::TraitSurfaceSignificance::High
+    );
+    assert_eq!(into_iter.associated_type_bindings.len(), 2);
+    assert!(document_surface
+        .trait_surfaces
+        .iter()
+        .all(|entry| entry.trait_name != "Debug"));
 }
 
 #[test]

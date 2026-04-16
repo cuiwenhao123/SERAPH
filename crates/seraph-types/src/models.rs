@@ -1,4 +1,7 @@
-use crate::{ApiId, CapId, ModuleId, RiskLevel, TraitId, TypeId};
+use crate::{
+    ApiId, CapId, ModuleId, RiskLevel, TraitAssociatedConstBinding,
+    TraitAssociatedTypeBinding, TraitId, TraitImplId, TraitOrigin, TypeId,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -8,6 +11,10 @@ pub struct Models {
     pub slm: Vec<StateLifecycleModel>,
     pub api_contracts: Vec<ApiContract>,
     pub risk_surface_map: RiskSurfaceMap,
+    // Type-centered summary of high-signal trait impl surfaces. This stays
+    // parallel to FCG instead of being folded into capability nodes.
+    #[serde(default)]
+    pub trait_surface_map: TraitSurfaceMap,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,6 +184,82 @@ pub struct RiskSurfaceMap {
     pub api_risks: Vec<ApiRisk>,
     pub type_synthesis_overview: TypeSynthesisOverview,
     pub rust_feature_risks: Vec<RustFeatureRisk>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TraitSurfaceMap {
+    // Per-public-type trait capability summaries. Empty means Phase 2 chose not
+    // to promote any impl surfaces into this summary layer.
+    #[serde(default)]
+    pub type_surfaces: Vec<TypeTraitSurface>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeTraitSurface {
+    // Stable public type anchor used to join this summary back to FCG/SLM/risk.
+    pub type_id: TypeId,
+    // Human-readable canonical path copied through for auditing and fixtures.
+    pub path: String,
+    // High- or medium-significance trait surfaces exposed by this type.
+    #[serde(default)]
+    pub trait_surfaces: Vec<TraitSurfaceEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitSurfaceEntry {
+    // Back-reference to the exact Phase 1 impl fact this summary row came from.
+    pub trait_impl_id: TraitImplId,
+    // Stable trait node identifier for the implemented trait.
+    pub trait_id: TraitId,
+    // Short trait name such as `BufMut`, `IntoIterator`, or `Default`.
+    pub trait_name: String,
+    // Canonical path of the implemented trait item.
+    pub trait_path: String,
+    // Whether the trait is local to the crate, re-exported, or external.
+    pub trait_origin: TraitOrigin,
+    // Source-like rendering of the impl header's `for` side.
+    pub for_type_text: String,
+    // Coarse semantic bucket used by planner/codegen, not a risk classification.
+    pub surface_kind: TraitSurfaceKind,
+    // Only elevated summary levels are kept here; low-value impls stay in Phase 1.
+    pub significance: TraitSurfaceSignificance,
+    // Deterministic one-line explanation of why this trait surface matters.
+    pub capability_summary: String,
+    // Local trait methods that map back to Phase 1 API ids. External traits are
+    // usually empty because they do not produce crate-local API rows.
+    #[serde(default)]
+    pub trait_method_api_ids: Vec<ApiId>,
+    // Concrete associated type choices made by this impl, copied from Phase 1.
+    #[serde(default)]
+    pub associated_type_bindings: Vec<TraitAssociatedTypeBinding>,
+    // Concrete associated const choices made by this impl, copied from Phase 1.
+    #[serde(default)]
+    pub associated_const_bindings: Vec<TraitAssociatedConstBinding>,
+    // Raw cfg/cfg_attr text that gates this impl surface.
+    #[serde(default)]
+    pub cfg_attrs: Vec<String>,
+    // True only when the impl header itself is `unsafe impl`.
+    pub is_unsafe: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraitSurfaceKind {
+    DomainTrait,
+    Iteration,
+    Construction,
+    Adapter,
+    IoAdapter,
+    MutationExtension,
+    Serialization,
+    Operator,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraitSurfaceSignificance {
+    High,
+    Medium,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
