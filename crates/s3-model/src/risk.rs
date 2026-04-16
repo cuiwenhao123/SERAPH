@@ -1,8 +1,8 @@
 use seraph_types::{
-    ApiContract, ApiId, ApiRisk, Knowledge, ReprKind, RiskLevel, RiskSurfaceMap,
-    RustFeatureRisk, TypeSynthesisOverview,
+    ApiContract, ApiId, ApiInfo, ApiRisk, Knowledge, ReprKind, RiskLevel, RiskOwner,
+    RiskSurfaceMap, RustFeatureRisk, TypeId, TypeSynthesisOverview,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub fn build_risk_surface_map(
     knowledge: &Knowledge,
@@ -21,9 +21,22 @@ pub fn build_risk_surface_map(
 }
 
 fn build_api_risk(knowledge: &Knowledge, contract: &ApiContract) -> ApiRisk {
+    let api_info = find_api_info(knowledge, &contract.api_id);
+    let owner_type_id = api_info.and_then(|api| api.owner_type_id.as_ref());
     let mut score = 0;
     let mut reasons = Vec::new();
 
+    if api_info.map(|api| api.is_unsafe).unwrap_or(false) {
+        score += 2;
+        reasons.push("unsafe API surface".to_owned());
+    }
+    if api_info
+        .map(|api| api.contains_unsafe_block)
+        .unwrap_or(false)
+    {
+        score += 2;
+        reasons.push("contains unsafe block".to_owned());
+    }
     if contract
         .side_effects
         .iter()
@@ -60,12 +73,41 @@ fn build_api_risk(knowledge: &Knowledge, contract: &ApiContract) -> ApiRisk {
     }
     if knowledge
         .risk_facts
+        .explicit_panic_sites
+        .iter()
+        .any(|fact| matches!(&fact.owner, RiskOwner::Api(api_id) if *api_id == contract.api_id))
+    {
+        score += 1;
+        reasons.push("explicit panic site".to_owned());
+    }
+    if knowledge
+        .risk_facts
         .borrowed_return_apis
         .iter()
         .any(|fact| fact.api_id == contract.api_id)
     {
         score += 1;
         reasons.push("borrowed return ties output to input".to_owned());
+    }
+    if owner_type_id
+        .map(|type_id| {
+            knowledge
+                .risk_facts
+                .drop_impl_types
+                .iter()
+                .any(|candidate| candidate == type_id)
+        })
+        .unwrap_or(false)
+    {
+        score += 1;
+        reasons.push("owner type implements Drop".to_owned());
+    }
+    if owner_type_id
+        .map(|type_id| owner_type_has_packed_repr(knowledge, type_id))
+        .unwrap_or(false)
+    {
+        score += 2;
+        reasons.push("owner type uses repr(packed)".to_owned());
     }
 
     let risk_level = match score {
@@ -99,8 +141,7 @@ fn build_type_synthesis_overview(api_contracts: &[ApiContract]) -> TypeSynthesis
     }
 
     let c_count = strategy_distribution.get("C").copied().unwrap_or(0);
-    let one_liner =
-        format!("{generic_api_count} 个泛型 API，其中 {c_count} 个适合自定义类型合成");
+    let one_liner = format!("{generic_api_count} 个泛型 API，其中 {c_count} 个适合自定义类型合成");
 
     TypeSynthesisOverview {
         generic_api_count,
@@ -140,12 +181,26 @@ fn build_rust_feature_risks(knowledge: &Knowledge) -> Vec<RustFeatureRisk> {
         });
     }
 
-    let repr_packed_apis = knowledge
+    let packed_type_ids = knowledge
         .risk_facts
         .repr_types
         .iter()
-        .filter(|fact| fact.repr_kinds.iter().any(|kind| matches!(kind, ReprKind::Packed)))
-        .flat_map(|_| Vec::<ApiId>::new())
+        .filter(|fact| {
+            fact.repr_kinds
+                .iter()
+                .any(|kind| matches!(kind, ReprKind::Packed))
+        })
+        .map(|fact| fact.type_id.clone())
+        .collect::<BTreeSet<TypeId>>();
+    let repr_packed_apis = knowledge
+        .apis
+        .iter()
+        .filter_map(|api| {
+            api.owner_type_id
+                .as_ref()
+                .filter(|type_id| packed_type_ids.contains(*type_id))
+                .map(|_| api.api_id.clone())
+        })
         .collect::<Vec<_>>();
     if !repr_packed_apis.is_empty() {
         risks.push(RustFeatureRisk {
@@ -155,11 +210,77 @@ fn build_rust_feature_risks(knowledge: &Knowledge) -> Vec<RustFeatureRisk> {
         });
     }
 
+    let conditional_impl_apis = knowledge
+        .trait_impl_registry
+        .iter()
+        .filter(|impl_info| !impl_info.cfg_attrs.is_empty())
+        .flat_map(|impl_info| {
+            knowledge
+                .apis
+                .iter()
+                .filter(move |api| api.owner_type_id.as_ref() == Some(&impl_info.target_type_id))
+                .map(|api| api.api_id.clone())
+        })
+        .collect::<BTreeSet<ApiId>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if !conditional_impl_apis.is_empty() {
+        risks.push(RustFeatureRisk {
+            feature: "conditional_impl".to_owned(),
+            apis_affected: conditional_impl_apis,
+            risk: "public surface depends on cfg-gated impl availability".to_owned(),
+        });
+    }
+
+    let panic_in_drop_type_ids = knowledge
+        .trait_impl_registry
+        .iter()
+        .filter(|impl_info| impl_info.trait_canonical_path == "core::ops::drop::Drop")
+        .filter(|impl_info| {
+            knowledge.risk_facts.explicit_panic_sites.iter().any(|fact| {
+                matches!(&fact.owner, RiskOwner::TraitImpl(id) if id == &impl_info.trait_impl_id)
+            })
+        })
+        .map(|impl_info| impl_info.target_type_id.clone())
+        .collect::<BTreeSet<TypeId>>();
+    let panic_in_drop_apis = knowledge
+        .apis
+        .iter()
+        .filter_map(|api| {
+            api.owner_type_id
+                .as_ref()
+                .filter(|type_id| panic_in_drop_type_ids.contains(*type_id))
+                .map(|_| api.api_id.clone())
+        })
+        .collect::<BTreeSet<ApiId>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if !panic_in_drop_apis.is_empty() {
+        risks.push(RustFeatureRisk {
+            feature: "panic_in_drop".to_owned(),
+            apis_affected: panic_in_drop_apis,
+            risk: "Drop impl can panic during destruction".to_owned(),
+        });
+    }
+
     risks
 }
 
 fn recommend_fuzz_strategy(contract: &ApiContract, knowledge: &Knowledge) -> String {
-    if knowledge
+    let api_info = find_api_info(knowledge, &contract.api_id);
+    let owner_type_id = api_info.and_then(|api| api.owner_type_id.as_ref());
+
+    if owner_type_id
+        .map(|type_id| owner_type_has_packed_repr(knowledge, type_id))
+        .unwrap_or(false)
+    {
+        "avoid reference-heavy access patterns on packed owner types".to_owned()
+    } else if api_info
+        .map(|api| api.is_unsafe || api.contains_unsafe_block)
+        .unwrap_or(false)
+    {
+        "exercise safety-sensitive paths with invariant-preserving setup".to_owned()
+    } else if knowledge
         .risk_facts
         .extern_abi_apis
         .iter()
@@ -183,4 +304,18 @@ fn recommend_fuzz_strategy(contract: &ApiContract, knowledge: &Knowledge) -> Str
     } else {
         "exercise documented public entry points".to_owned()
     }
+}
+
+fn find_api_info<'a>(knowledge: &'a Knowledge, api_id: &ApiId) -> Option<&'a ApiInfo> {
+    knowledge.apis.iter().find(|api| &api.api_id == api_id)
+}
+
+fn owner_type_has_packed_repr(knowledge: &Knowledge, type_id: &TypeId) -> bool {
+    knowledge.risk_facts.repr_types.iter().any(|fact| {
+        &fact.type_id == type_id
+            && fact
+                .repr_kinds
+                .iter()
+                .any(|kind| matches!(kind, ReprKind::Packed))
+    })
 }

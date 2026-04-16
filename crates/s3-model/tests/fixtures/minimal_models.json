@@ -309,7 +309,9 @@
     {
       "api_id": "api::demo::query::Parser::start",
       "path": "demo::query::Parser::start",
-      "preconditions": [],
+      "preconditions": [
+        "Panics if the parser is already closed."
+      ],
       "postconditions": [
         "returns ()"
       ],
