@@ -529,6 +529,215 @@ fn fcg_does_not_promote_helper_free_functions_to_module_entry_construction() {
 }
 
 #[test]
+fn fcg_promotes_factory_free_functions_returning_public_types_to_module_entry_construction() {
+    let mut knowledge = fixture_knowledge();
+
+    knowledge.types.push(seraph_types::TypeInfo {
+        type_id: seraph_types::TypeId::from("type::demo::channel::Sender"),
+        name: "Sender".into(),
+        canonical_path: "demo::channel::Sender".into(),
+        public_paths: vec!["demo::channel::Sender".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::channel"),
+        code_ref: CodeRef {
+            file: "src/channel.rs".into(),
+            start_line: 1,
+            end_line: 8,
+        },
+        docs: "Sending side of a channel.".into(),
+        doc_sections: DocSections::default(),
+        kind: seraph_types::TypeKind::Struct,
+        generic_params: vec!["T".into()],
+        where_clauses: vec![],
+        is_non_exhaustive: false,
+        fields: vec![],
+        variants: vec![],
+        has_hidden_fields: false,
+        has_hidden_variants: false,
+    });
+    knowledge.types.push(seraph_types::TypeInfo {
+        type_id: seraph_types::TypeId::from("type::demo::channel::Receiver"),
+        name: "Receiver".into(),
+        canonical_path: "demo::channel::Receiver".into(),
+        public_paths: vec!["demo::channel::Receiver".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::channel"),
+        code_ref: CodeRef {
+            file: "src/channel.rs".into(),
+            start_line: 10,
+            end_line: 18,
+        },
+        docs: "Receiving side of a channel.".into(),
+        doc_sections: DocSections::default(),
+        kind: seraph_types::TypeKind::Struct,
+        generic_params: vec!["T".into()],
+        where_clauses: vec![],
+        is_non_exhaustive: false,
+        fields: vec![],
+        variants: vec![],
+        has_hidden_fields: false,
+        has_hidden_variants: false,
+    });
+
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::channel::Sender::send"),
+        name: "send".into(),
+        canonical_path: "demo::channel::Sender::send".into(),
+        public_paths: vec!["demo::channel::Sender::send".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::channel"),
+        owner_type_id: Some(seraph_types::TypeId::from("type::demo::channel::Sender")),
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/channel.rs".into(),
+            start_line: 20,
+            end_line: 20,
+        },
+        docs: "Send a value.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::InherentMethod,
+        signature_text: "pub fn send(&self, value: T) -> Result<(), Error>".into(),
+        receiver: Some("&self".into()),
+        generic_params: vec![],
+        where_clauses: vec![],
+        arg_types: vec!["T".into()],
+        return_type: Some("Result<(), Error>".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Result,
+            inner_types: vec!["()".into(), "Error".into()],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::channel::Receiver::recv"),
+        name: "recv".into(),
+        canonical_path: "demo::channel::Receiver::recv".into(),
+        public_paths: vec!["demo::channel::Receiver::recv".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::channel"),
+        owner_type_id: Some(seraph_types::TypeId::from("type::demo::channel::Receiver")),
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/channel.rs".into(),
+            start_line: 22,
+            end_line: 22,
+        },
+        docs: "Receive a value.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::InherentMethod,
+        signature_text: "pub fn recv(&self) -> Result<T, Error>".into(),
+        receiver: Some("&self".into()),
+        generic_params: vec![],
+        where_clauses: vec![],
+        arg_types: vec![],
+        return_type: Some("Result<T, Error>".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Result,
+            inner_types: vec!["T".into(), "Error".into()],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::channel::bounded"),
+        name: "bounded".into(),
+        canonical_path: "demo::channel::bounded".into(),
+        public_paths: vec!["demo::channel::bounded".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::channel"),
+        owner_type_id: None,
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/channel.rs".into(),
+            start_line: 24,
+            end_line: 24,
+        },
+        docs: "Create a bounded channel.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::FreeFunction,
+        signature_text: "pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>)".into(),
+        receiver: None,
+        generic_params: vec!["T".into()],
+        where_clauses: vec![],
+        arg_types: vec!["usize".into()],
+        return_type: Some("(Sender<T>, Receiver<T>)".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Tuple,
+            inner_types: vec!["Sender<T>".into(), "Receiver<T>".into()],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::channel::unbounded"),
+        name: "unbounded".into(),
+        canonical_path: "demo::channel::unbounded".into(),
+        public_paths: vec!["demo::channel::unbounded".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::channel"),
+        owner_type_id: None,
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/channel.rs".into(),
+            start_line: 26,
+            end_line: 26,
+        },
+        docs: "Create an unbounded channel.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::FreeFunction,
+        signature_text: "pub fn unbounded<T>() -> (Sender<T>, Receiver<T>)".into(),
+        receiver: None,
+        generic_params: vec!["T".into()],
+        where_clauses: vec![],
+        arg_types: vec![],
+        return_type: Some("(Sender<T>, Receiver<T>)".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Tuple,
+            inner_types: vec!["Sender<T>".into(), "Receiver<T>".into()],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+
+    let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
+    let module_construction = models
+        .fcg
+        .capability_api_index
+        .get(&seraph_types::CapId::from(
+            "cap::demo::channel::module_entry::construction",
+        ))
+        .unwrap();
+    assert!(module_construction.contains(&seraph_types::ApiId::from(
+        "api::demo::channel::bounded"
+    )));
+    assert!(module_construction.contains(&seraph_types::ApiId::from(
+        "api::demo::channel::unbounded"
+    )));
+
+    let module_cap = models
+        .fcg
+        .capabilities
+        .iter()
+        .find(|cap| {
+            cap.cap_id
+                == seraph_types::CapId::from("cap::demo::channel::module_entry::construction")
+        })
+        .unwrap();
+    assert!(
+        module_cap
+            .connects_to
+            .contains(&seraph_types::CapId::from("cap::demo::channel::Receiver::query"))
+    );
+}
+
+#[test]
 fn fcg_classifies_self_consuming_cross_type_methods_as_conversion() {
     let mut knowledge = fixture_knowledge();
 

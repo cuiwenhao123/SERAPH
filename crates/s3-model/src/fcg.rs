@@ -250,7 +250,8 @@ fn is_construction_api(api: &ApiInfo, type_lookup: &TypeLookup) -> bool {
     }
 
     if matches!(api.api_kind, ApiKind::FreeFunction) {
-        return is_construction_like_name(api.name.as_str());
+        return is_construction_like_name(api.name.as_str())
+            || free_function_exposes_public_return_type(api, type_lookup);
     }
 
     if matches!(api.api_kind, ApiKind::AssocFunction) {
@@ -263,6 +264,20 @@ fn is_construction_api(api: &ApiInfo, type_lookup: &TypeLookup) -> bool {
     }
 
     false
+}
+
+fn free_function_exposes_public_return_type(api: &ApiInfo, type_lookup: &TypeLookup) -> bool {
+    // Factory-style free functions such as `bounded` / `unbounded` often do not
+    // look like constructors by name, but they still expose the crate's public
+    // entry surface by returning public nominal types.
+    candidate_return_types(api).iter().any(|candidate| {
+        resolve_module_entry_return_type_id(
+            candidate.as_str(),
+            api.generic_params.as_slice(),
+            type_lookup,
+        )
+        .is_some()
+    })
 }
 
 fn is_construction_like_name(name: &str) -> bool {
@@ -507,6 +522,59 @@ fn resolve_type_id(candidate_type: &str, type_lookup: &TypeLookup) -> Option<Typ
         .unique_short_names
         .get(short_name(normalized.as_str()))
         .cloned()
+}
+
+fn resolve_module_entry_return_type_id(
+    candidate_type: &str,
+    generic_params: &[String],
+    type_lookup: &TypeLookup,
+) -> Option<TypeId> {
+    if let Some(type_id) = type_lookup.exact_paths.get(candidate_type) {
+        return Some(type_id.clone());
+    }
+
+    let normalized = normalize_type_text(candidate_type);
+    if normalized.is_empty() {
+        return None;
+    }
+
+    if let Some(type_id) = type_lookup.exact_paths.get(&normalized) {
+        return Some(type_id.clone());
+    }
+
+    if is_projection_like_type(normalized.as_str(), generic_params) {
+        return None;
+    }
+
+    if normalized.contains("::") {
+        if normalized.starts_with("crate::")
+            || normalized.starts_with("self::")
+            || normalized.starts_with("super::")
+        {
+            return type_lookup
+                .unique_short_names
+                .get(short_name(normalized.as_str()))
+                .cloned();
+        }
+        return None;
+    }
+
+    type_lookup
+        .unique_short_names
+        .get(short_name(normalized.as_str()))
+        .cloned()
+}
+
+fn is_projection_like_type(normalized: &str, generic_params: &[String]) -> bool {
+    if normalized.starts_with('<') {
+        return true;
+    }
+
+    let Some((head, _)) = normalized.split_once("::") else {
+        return false;
+    };
+
+    head == "Self" || generic_params.iter().any(|param| param == head)
 }
 
 fn normalize_type_text(candidate_type: &str) -> String {
