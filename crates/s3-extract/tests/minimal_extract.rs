@@ -34,6 +34,14 @@ fn sqlx_core_manifest_path() -> &'static str {
     "/tmp/seraph-real-crates/sqlx/sqlx-core/Cargo.toml"
 }
 
+fn camino_manifest_path() -> &'static str {
+    "/tmp/seraph-phase2-new-crates/camino/Cargo.toml"
+}
+
+fn tar_manifest_path() -> &'static str {
+    "/tmp/seraph-phase2-new-crates/tar-rs/Cargo.toml"
+}
+
 #[test]
 fn build_minimal_knowledge_normalizes_import_name() {
     let knowledge = s3_extract::build_minimal_knowledge("serde-json-wrapper");
@@ -450,6 +458,56 @@ fn extract_workspace_member_manifest_reads_rustdoc_from_workspace_target() {
         .types
         .iter()
         .any(|ty| ty.canonical_path == "sqlx_core::pool::Pool"));
+}
+
+#[test]
+fn extract_real_camino_omits_impl_trait_from_api_generic_params() {
+    let knowledge = s3_extract::extract_knowledge_from_manifest(camino_manifest_path())
+        .expect("camino manifest should extract successfully");
+
+    let utf8_path_new = knowledge
+        .apis
+        .iter()
+        .find(|api| api.canonical_path == "camino::Utf8Path::new")
+        .expect("Utf8Path::new should be extracted");
+    assert_eq!(
+        utf8_path_new.generic_params,
+        Vec::<String>::new(),
+        "`impl AsRef<str> + ?Sized` should not be recorded as a generic parameter"
+    );
+
+    let utf8_path_join = knowledge
+        .apis
+        .iter()
+        .find(|api| api.canonical_path == "camino::Utf8Path::join")
+        .expect("Utf8Path::join should be extracted");
+    assert_eq!(
+        utf8_path_join.generic_params,
+        Vec::<String>::new(),
+        "`impl AsRef<Utf8Path>` should stay in the argument type, not generic_params"
+    );
+}
+
+#[test]
+fn extract_real_tar_keeps_lifetimes_but_omits_impl_trait_generic_params() {
+    let knowledge = s3_extract::extract_knowledge_from_manifest(tar_manifest_path())
+        .expect("tar manifest should extract successfully");
+
+    let append_pax_extensions = knowledge
+        .apis
+        .iter()
+        .find(|api| api.canonical_path == "tar::builder::Builder::append_pax_extensions")
+        .expect("append_pax_extensions should be extracted");
+    assert_eq!(
+        append_pax_extensions.generic_params,
+        vec!["'key".to_owned(), "'value".to_owned()],
+        "named lifetimes should be preserved while synthetic `impl Trait` params are filtered out"
+    );
+    assert_eq!(
+        append_pax_extensions.arg_types,
+        vec!["impl IntoIterator<Item = (&'key str, &'value [u8])>".to_owned()],
+        "the argument type should keep the original `impl Trait` surface text"
+    );
 }
 
 #[test]

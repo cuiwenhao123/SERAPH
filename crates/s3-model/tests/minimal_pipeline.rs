@@ -328,6 +328,206 @@ fn fcg_avoids_query_to_query_cross_anchor_edges_and_compresses_one_liner() {
 }
 
 #[test]
+fn fcg_uses_into_iterator_trait_impl_surface_for_construction_handoffs() {
+    let mut knowledge = fixture_knowledge();
+
+    knowledge.types.push(seraph_types::TypeInfo {
+        type_id: seraph_types::TypeId::from("type::demo::query::ParserIntoIter"),
+        name: "ParserIntoIter".into(),
+        canonical_path: "demo::query::ParserIntoIter".into(),
+        public_paths: vec!["demo::query::ParserIntoIter".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::query"),
+        code_ref: CodeRef {
+            file: "src/query.rs".into(),
+            start_line: 40,
+            end_line: 44,
+        },
+        docs: "Iterator returned when a parser is consumed.".into(),
+        doc_sections: DocSections::default(),
+        kind: seraph_types::TypeKind::Struct,
+        generic_params: vec![],
+        where_clauses: vec![],
+        is_non_exhaustive: false,
+        fields: vec![],
+        variants: vec![],
+        has_hidden_fields: false,
+        has_hidden_variants: false,
+    });
+
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::query::ParserIntoIter::peek"),
+        name: "peek".into(),
+        canonical_path: "demo::query::ParserIntoIter::peek".into(),
+        public_paths: vec!["demo::query::ParserIntoIter::peek".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::query"),
+        owner_type_id: Some(seraph_types::TypeId::from("type::demo::query::ParserIntoIter")),
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/query.rs".into(),
+            start_line: 46,
+            end_line: 46,
+        },
+        docs: "Peeks the next parser item.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::InherentMethod,
+        signature_text: "pub fn peek(&self) -> Option<&str>".into(),
+        receiver: Some("&self".into()),
+        generic_params: vec![],
+        where_clauses: vec![],
+        arg_types: vec![],
+        return_type: Some("Option<&str>".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Option,
+            inner_types: vec!["&str".into()],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+
+    knowledge
+        .trait_impl_registry
+        .push(seraph_types::TraitImplInfo {
+            trait_impl_id: "trait_impl::core::iter::traits::collect::IntoIterator::for::demo::query::Parser".into(),
+            target_type_id: seraph_types::TypeId::from("type::demo::query::Parser"),
+            trait_ref_text: "core::iter::traits::collect::IntoIterator".into(),
+            for_type_text: "demo::query::Parser".into(),
+            trait_id: seraph_types::TraitId::from("trait::core::iter::traits::collect::IntoIterator"),
+            trait_name: "IntoIterator".into(),
+            trait_canonical_path: "core::iter::traits::collect::IntoIterator".into(),
+            trait_origin: seraph_types::TraitOrigin::External,
+            source: CodeRef {
+                file: "src/query.rs".into(),
+                start_line: 48,
+                end_line: 52,
+            },
+            associated_type_bindings: vec![
+                seraph_types::TraitAssociatedTypeBinding {
+                    name: "IntoIter".into(),
+                    generic_params: vec![],
+                    where_clauses: vec![],
+                    bounds: vec![],
+                    assigned_type: Some("demo::query::ParserIntoIter".into()),
+                    source: None,
+                },
+            ],
+            associated_const_bindings: vec![],
+            where_clauses: vec![],
+            cfg_attrs: vec![],
+            is_unsafe: false,
+        });
+
+    let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
+    let parser_construction = models
+        .fcg
+        .capabilities
+        .iter()
+        .find(|cap| cap.cap_id == seraph_types::CapId::from("cap::demo::query::Parser::construction"))
+        .unwrap();
+
+    assert!(
+        parser_construction
+            .connects_to
+            .contains(&seraph_types::CapId::from("cap::demo::query::ParserIntoIter::query"))
+    );
+    assert!(
+        models
+            .fcg
+            .capability_chains
+            .iter()
+            .any(|chain| chain == &vec![
+                seraph_types::CapId::from("cap::demo::query::Parser::construction"),
+                seraph_types::CapId::from("cap::demo::query::ParserIntoIter::query")
+            ])
+    );
+}
+
+#[test]
+fn fcg_does_not_promote_helper_free_functions_to_module_entry_construction() {
+    let mut knowledge = fixture_knowledge();
+
+    knowledge.types.push(seraph_types::TypeInfo {
+        type_id: seraph_types::TypeId::from("type::demo::io::Error"),
+        name: "Error".into(),
+        canonical_path: "demo::io::Error".into(),
+        public_paths: vec!["demo::io::Error".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::io"),
+        code_ref: CodeRef {
+            file: "src/io.rs".into(),
+            start_line: 50,
+            end_line: 55,
+        },
+        docs: "Public IO error type.".into(),
+        doc_sections: DocSections::default(),
+        kind: seraph_types::TypeKind::Struct,
+        generic_params: vec![],
+        where_clauses: vec![],
+        is_non_exhaustive: false,
+        fields: vec![],
+        variants: vec![],
+        has_hidden_fields: false,
+        has_hidden_variants: false,
+    });
+
+    knowledge.apis.push(seraph_types::ApiInfo {
+        api_id: seraph_types::ApiId::from("api::demo::io::invalid_option"),
+        name: "invalid_option".into(),
+        canonical_path: "demo::io::invalid_option".into(),
+        public_paths: vec!["demo::io::invalid_option".into()],
+        public_anchor_module_id: seraph_types::ModuleId::from("mod::demo::io"),
+        owner_type_id: None,
+        owner_trait_id: None,
+        code_ref: CodeRef {
+            file: "src/io.rs".into(),
+            start_line: 50,
+            end_line: 54,
+        },
+        docs: "Serde helper that normalizes empty values.".into(),
+        doc_sections: DocSections::default(),
+        api_kind: seraph_types::ApiKind::FreeFunction,
+        signature_text: "pub fn invalid_option<'de, D, T>(D) -> Result<Option<T>, D::Error>".into(),
+        receiver: None,
+        generic_params: vec!["'de".into(), "D".into(), "T".into()],
+        where_clauses: vec![],
+        arg_types: vec!["D".into()],
+        return_type: Some("Result<Option<T>, D::Error>".into()),
+        return_shape: Some(seraph_types::ReturnShape {
+            kind: seraph_types::ReturnShapeKind::Nominal,
+            inner_types: vec!["Option<T>".into(), "D::Error".into()],
+        }),
+        is_unsafe: false,
+        is_async: false,
+        is_const: false,
+        has_body: true,
+        contains_unsafe_block: false,
+    });
+
+    let models = s3_model::build_models_from_knowledge(&knowledge).unwrap();
+    let io_construction = models
+        .fcg
+        .capability_api_index
+        .get(&seraph_types::CapId::from(
+            "cap::demo::io::module_entry::construction",
+        ))
+        .unwrap();
+    assert_eq!(
+        io_construction,
+        &vec![seraph_types::ApiId::from("api::demo::io::from_reader")]
+    );
+
+    let io_query = models
+        .fcg
+        .capability_api_index
+        .get(&seraph_types::CapId::from("cap::demo::io::module_entry::query"))
+        .unwrap();
+    assert!(io_query.contains(&seraph_types::ApiId::from(
+        "api::demo::io::invalid_option"
+    )));
+}
+
+#[test]
 fn slm_scores_stateful_types_and_emits_forbidden_transitions() {
     let knowledge = fixture_knowledge();
 

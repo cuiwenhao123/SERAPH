@@ -76,6 +76,7 @@ pub fn build_fcg(knowledge: &Knowledge) -> FunctionalCapabilityGraph {
                 acc
             },
         );
+    let into_iterator_handoffs = build_into_iterator_handoffs(knowledge, &type_lookup, &caps_by_type);
 
     for capability in &mut capabilities {
         let mut targets = BTreeSet::new();
@@ -85,6 +86,9 @@ pub fn build_fcg(knowledge: &Knowledge) -> FunctionalCapabilityGraph {
                 Some(type_id) => {
                     if let Some(entries) = caps_by_type.get(type_id) {
                         targets.extend(construction_followups(entries));
+                    }
+                    if let Some(handoffs) = into_iterator_handoffs.get(type_id) {
+                        targets.extend(handoffs.iter().cloned());
                     }
                 }
                 None => {
@@ -245,7 +249,11 @@ fn is_construction_api(api: &ApiInfo, type_lookup: &TypeLookup) -> bool {
         return true;
     }
 
-    if matches!(api.api_kind, ApiKind::FreeFunction | ApiKind::AssocFunction) {
+    if matches!(api.api_kind, ApiKind::FreeFunction) {
+        return is_construction_like_name(api.name.as_str());
+    }
+
+    if matches!(api.api_kind, ApiKind::AssocFunction) {
         if is_construction_like_name(api.name.as_str()) {
             return true;
         }
@@ -385,6 +393,47 @@ fn preferred_type_capability(
             .find(|(entry_role, _)| entry_role == role)
             .map(|(_, cap_id)| cap_id.clone())
     })
+}
+
+fn build_into_iterator_handoffs(
+    knowledge: &Knowledge,
+    type_lookup: &TypeLookup,
+    caps_by_type: &BTreeMap<TypeId, Vec<(CapabilityRole, CapId)>>,
+) -> BTreeMap<TypeId, Vec<CapId>> {
+    let mut handoffs = BTreeMap::<TypeId, BTreeSet<CapId>>::new();
+
+    for trait_impl in &knowledge.trait_impl_registry {
+        if short_name(trait_impl.trait_canonical_path.as_str()) != "IntoIterator" {
+            continue;
+        }
+
+        for binding in &trait_impl.associated_type_bindings {
+            if binding.name != "IntoIter" {
+                continue;
+            }
+
+            let Some(assigned_type) = binding.assigned_type.as_deref() else {
+                continue;
+            };
+            let Some(target_type_id) = resolve_type_id(assigned_type, type_lookup) else {
+                continue;
+            };
+            let Some(target_cap_id) = preferred_type_capability(&target_type_id, caps_by_type)
+            else {
+                continue;
+            };
+
+            handoffs
+                .entry(trait_impl.target_type_id.clone())
+                .or_default()
+                .insert(target_cap_id);
+        }
+    }
+
+    handoffs
+        .into_iter()
+        .map(|(type_id, cap_ids)| (type_id, cap_ids.into_iter().collect()))
+        .collect()
 }
 
 fn role_allows_cross_anchor(role: CapabilityRole) -> bool {

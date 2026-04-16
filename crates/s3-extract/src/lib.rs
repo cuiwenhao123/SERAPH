@@ -3472,11 +3472,32 @@ fn generic_param_names(generics_value: Option<&Value>) -> Vec<String> {
         .map(|params| {
             params
                 .iter()
-                .filter_map(|param| param.get("name").and_then(Value::as_str))
-                .map(ToOwned::to_owned)
+                .filter_map(generic_param_name)
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn generic_param_name(param: &Value) -> Option<String> {
+    let name = param.get("name").and_then(Value::as_str)?;
+    let kind = param.get("kind").and_then(Value::as_object)?;
+
+    if kind.get("lifetime").is_some() || kind.get("const").is_some() {
+        return Some(name.to_owned());
+    }
+
+    if let Some(type_param) = kind.get("type").and_then(Value::as_object) {
+        if type_param
+            .get("is_synthetic")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return None;
+        }
+        return Some(name.to_owned());
+    }
+
+    Some(name.to_owned())
 }
 
 fn macro_signature_text(item: &RustdocItem) -> Option<String> {
@@ -5256,5 +5277,47 @@ mod tests {
         });
 
         assert_eq!(render_type(&ty), "&'a mut dyn IoContext");
+    }
+
+    #[test]
+    fn generic_param_names_skips_synthetic_impl_trait_params() {
+        let generics = json!({
+            "params": [
+                {
+                    "name": "'a",
+                    "kind": {
+                        "lifetime": {
+                            "outlives": []
+                        }
+                    }
+                },
+                {
+                    "name": "T",
+                    "kind": {
+                        "type": {
+                            "bounds": [],
+                            "default": null,
+                            "is_synthetic": false
+                        }
+                    }
+                },
+                {
+                    "name": "impl AsRef<str> + ?Sized",
+                    "kind": {
+                        "type": {
+                            "bounds": [],
+                            "default": null,
+                            "is_synthetic": true
+                        }
+                    }
+                }
+            ],
+            "where_predicates": []
+        });
+
+        assert_eq!(
+            generic_param_names(Some(&generics)),
+            vec!["'a".to_owned(), "T".to_owned()]
+        );
     }
 }
