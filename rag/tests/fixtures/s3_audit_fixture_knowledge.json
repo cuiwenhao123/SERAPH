@@ -1,0 +1,1539 @@
+{
+  "crate_meta": {
+    "package_name": "s3_audit_fixture",
+    "lib_target_name": "s3_audit_fixture",
+    "crate_import_name": "s3_audit_fixture",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "repository": null,
+    "manifest_path": "examples/target-crates/s3-audit-fixture/Cargo.toml",
+    "lib_rs_path": "examples/target-crates/s3-audit-fixture/src/lib.rs",
+    "default_features": [],
+    "cargo_description": null,
+    "root_docs": "Fixture crate used by `s3-extract` end-to-end tests.\n\n```\nuse s3_audit_fixture::ExampleType;\n\nlet value = ExampleType::new();\nassert_eq!(value.value(), 7);\n```\n\n```\nuse s3_audit_fixture::SAMPLE_CONST;\n\nassert_eq!(SAMPLE_CONST, 7);\n```",
+    "root_doc_sections": {
+      "summary": "Fixture crate used by `s3-extract` end-to-end tests.",
+      "panics": "",
+      "errors": "",
+      "safety": "",
+      "examples": ""
+    }
+  },
+  "modules": [
+    {
+      "module_id": "mod::s3_audit_fixture",
+      "name": "s3_audit_fixture",
+      "canonical_path": "s3_audit_fixture",
+      "public_paths": [
+        "s3_audit_fixture"
+      ],
+      "parent_module_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 1,
+        "end_line": 227
+      },
+      "docs": "Fixture crate used by `s3-extract` end-to-end tests.\n\n```\nuse s3_audit_fixture::ExampleType;\n\nlet value = ExampleType::new();\nassert_eq!(value.value(), 7);\n```\n\n```\nuse s3_audit_fixture::SAMPLE_CONST;\n\nassert_eq!(SAMPLE_CONST, 7);\n```",
+      "doc_sections": {
+        "summary": "Fixture crate used by `s3-extract` end-to-end tests.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      }
+    }
+  ],
+  "types": [
+    {
+      "type_id": "type::s3_audit_fixture::ExampleDrop",
+      "name": "ExampleDrop",
+      "canonical_path": "s3_audit_fixture::ExampleDrop",
+      "public_paths": [
+        "s3_audit_fixture::ExampleDrop"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 54,
+        "end_line": 54
+      },
+      "docs": "Public type with an explicit Drop impl used to verify drop fact extraction.",
+      "doc_sections": {
+        "summary": "Public type with an explicit Drop impl used to verify drop fact extraction.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "kind": "struct",
+      "generic_params": [],
+      "where_clauses": [],
+      "is_non_exhaustive": false,
+      "fields": [],
+      "variants": [],
+      "has_hidden_fields": false,
+      "has_hidden_variants": false
+    },
+    {
+      "type_id": "type::s3_audit_fixture::ExampleDropPanic",
+      "name": "ExampleDropPanic",
+      "canonical_path": "s3_audit_fixture::ExampleDropPanic",
+      "public_paths": [
+        "s3_audit_fixture::ExampleDropPanic"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 57,
+        "end_line": 57
+      },
+      "docs": "Public type with a panic in `Drop` used to verify impl-owned panic facts.",
+      "doc_sections": {
+        "summary": "Public type with a panic in `Drop` used to verify impl-owned panic facts.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "kind": "struct",
+      "generic_params": [],
+      "where_clauses": [],
+      "is_non_exhaustive": false,
+      "fields": [],
+      "variants": [],
+      "has_hidden_fields": false,
+      "has_hidden_variants": false
+    },
+    {
+      "type_id": "type::s3_audit_fixture::ExampleEnum",
+      "name": "ExampleEnum",
+      "canonical_path": "s3_audit_fixture::ExampleEnum",
+      "public_paths": [
+        "s3_audit_fixture::ExampleEnum"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 37,
+        "end_line": 42
+      },
+      "docs": "Public enum used to verify enum surface extraction.",
+      "doc_sections": {
+        "summary": "Public enum used to verify enum surface extraction.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "kind": "enum",
+      "generic_params": [],
+      "where_clauses": [],
+      "is_non_exhaustive": true,
+      "fields": [],
+      "variants": [
+        {
+          "name": "Unit",
+          "kind": "unit",
+          "is_non_exhaustive": false,
+          "discriminant_text": null,
+          "fields": [],
+          "source": {
+            "file": "src/lib.rs",
+            "start_line": 38,
+            "end_line": 38
+          }
+        },
+        {
+          "name": "Tuple",
+          "kind": "tuple",
+          "is_non_exhaustive": false,
+          "discriminant_text": null,
+          "fields": [
+            {
+              "position": 0,
+              "name": null,
+              "type_text": "usize",
+              "visibility_text": "default",
+              "source": {
+                "file": "src/lib.rs",
+                "start_line": 39,
+                "end_line": 39
+              }
+            }
+          ],
+          "source": {
+            "file": "src/lib.rs",
+            "start_line": 39,
+            "end_line": 39
+          }
+        },
+        {
+          "name": "Struct",
+          "kind": "struct",
+          "is_non_exhaustive": true,
+          "discriminant_text": null,
+          "fields": [
+            {
+              "position": 0,
+              "name": "label",
+              "type_text": "&'static str",
+              "visibility_text": "default",
+              "source": {
+                "file": "src/lib.rs",
+                "start_line": 41,
+                "end_line": 41
+              }
+            }
+          ],
+          "source": {
+            "file": "src/lib.rs",
+            "start_line": 41,
+            "end_line": 41
+          }
+        }
+      ],
+      "has_hidden_fields": false,
+      "has_hidden_variants": false
+    },
+    {
+      "type_id": "type::s3_audit_fixture::ExampleError",
+      "name": "ExampleError",
+      "canonical_path": "s3_audit_fixture::ExampleError",
+      "public_paths": [
+        "s3_audit_fixture::ExampleError"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 27,
+        "end_line": 27
+      },
+      "docs": "Tiny public error type used by constructor-shape tests.",
+      "doc_sections": {
+        "summary": "Tiny public error type used by constructor-shape tests.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "kind": "struct",
+      "generic_params": [],
+      "where_clauses": [],
+      "is_non_exhaustive": false,
+      "fields": [],
+      "variants": [],
+      "has_hidden_fields": false,
+      "has_hidden_variants": false
+    },
+    {
+      "type_id": "type::s3_audit_fixture::ExampleHolder",
+      "name": "ExampleHolder",
+      "canonical_path": "s3_audit_fixture::ExampleHolder",
+      "public_paths": [
+        "s3_audit_fixture::ExampleHolder"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 45,
+        "end_line": 47
+      },
+      "docs": "Borrowed data holder used to verify borrowed return facts.",
+      "doc_sections": {
+        "summary": "Borrowed data holder used to verify borrowed return facts.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "kind": "struct",
+      "generic_params": [
+        "'a"
+      ],
+      "where_clauses": [],
+      "is_non_exhaustive": false,
+      "fields": [],
+      "variants": [],
+      "has_hidden_fields": true,
+      "has_hidden_variants": false
+    },
+    {
+      "type_id": "type::s3_audit_fixture::ExampleRecord",
+      "name": "ExampleRecord",
+      "canonical_path": "s3_audit_fixture::ExampleRecord",
+      "public_paths": [
+        "s3_audit_fixture::ExampleRecord"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 30,
+        "end_line": 33
+      },
+      "docs": "Public struct with one visible field and one hidden field.",
+      "doc_sections": {
+        "summary": "Public struct with one visible field and one hidden field.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "kind": "struct",
+      "generic_params": [],
+      "where_clauses": [],
+      "is_non_exhaustive": false,
+      "fields": [
+        {
+          "position": 0,
+          "name": "name",
+          "type_text": "&'static str",
+          "visibility_text": "public",
+          "source": {
+            "file": "src/lib.rs",
+            "start_line": 31,
+            "end_line": 31
+          }
+        }
+      ],
+      "variants": [],
+      "has_hidden_fields": true,
+      "has_hidden_variants": false
+    },
+    {
+      "type_id": "type::s3_audit_fixture::ExampleSend",
+      "name": "ExampleSend",
+      "canonical_path": "s3_audit_fixture::ExampleSend",
+      "public_paths": [
+        "s3_audit_fixture::ExampleSend"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 60,
+        "end_line": 60
+      },
+      "docs": "Public type with a manual `Send` impl used to verify unsafe-impl extraction.",
+      "doc_sections": {
+        "summary": "Public type with a manual `Send` impl used to verify unsafe-impl extraction.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "kind": "struct",
+      "generic_params": [],
+      "where_clauses": [],
+      "is_non_exhaustive": false,
+      "fields": [],
+      "variants": [],
+      "has_hidden_fields": false,
+      "has_hidden_variants": false
+    },
+    {
+      "type_id": "type::s3_audit_fixture::ExampleTransparent",
+      "name": "ExampleTransparent",
+      "canonical_path": "s3_audit_fixture::ExampleTransparent",
+      "public_paths": [
+        "s3_audit_fixture::ExampleTransparent"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 51,
+        "end_line": 51
+      },
+      "docs": "Public repr-carrying type used to verify layout fact extraction.",
+      "doc_sections": {
+        "summary": "Public repr-carrying type used to verify layout fact extraction.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "kind": "struct",
+      "generic_params": [],
+      "where_clauses": [],
+      "is_non_exhaustive": false,
+      "fields": [
+        {
+          "position": 0,
+          "name": null,
+          "type_text": "usize",
+          "visibility_text": "public",
+          "source": {
+            "file": "src/lib.rs",
+            "start_line": 51,
+            "end_line": 51
+          }
+        }
+      ],
+      "variants": [],
+      "has_hidden_fields": false,
+      "has_hidden_variants": false
+    },
+    {
+      "type_id": "type::s3_audit_fixture::ExampleType",
+      "name": "ExampleType",
+      "canonical_path": "s3_audit_fixture::ExampleType",
+      "public_paths": [
+        "s3_audit_fixture::ExampleType"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 24,
+        "end_line": 24
+      },
+      "docs": "Simple public type for fixture docs.\n\n# Examples\n\n```\nlet value = s3_audit_fixture::ExampleType::new();\nassert_eq!(value.value(), 7);\n```",
+      "doc_sections": {
+        "summary": "Simple public type for fixture docs.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": "```\nlet value = s3_audit_fixture::ExampleType::new();\nassert_eq!(value.value(), 7);\n```"
+      },
+      "kind": "struct",
+      "generic_params": [],
+      "where_clauses": [],
+      "is_non_exhaustive": false,
+      "fields": [],
+      "variants": [],
+      "has_hidden_fields": false,
+      "has_hidden_variants": false
+    }
+  ],
+  "apis": [
+    {
+      "api_id": "api::s3_audit_fixture::ExampleHolder::as_str",
+      "name": "as_str",
+      "canonical_path": "s3_audit_fixture::ExampleHolder::as_str",
+      "public_paths": [
+        "s3_audit_fixture::ExampleHolder::as_str"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": "type::s3_audit_fixture::ExampleHolder",
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 112,
+        "end_line": 114
+      },
+      "docs": "",
+      "doc_sections": {
+        "summary": "",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "inherent_method",
+      "signature_text": "fn as_str(&Self) -> &str",
+      "receiver": "&Self",
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [],
+      "return_type": "&str",
+      "return_shape": {
+        "kind": "ref",
+        "inner_types": [
+          "str"
+        ]
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::s3_audit_fixture::ExampleHolder::new",
+      "name": "new",
+      "canonical_path": "s3_audit_fixture::ExampleHolder::new",
+      "public_paths": [
+        "s3_audit_fixture::ExampleHolder::new"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": "type::s3_audit_fixture::ExampleHolder",
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 108,
+        "end_line": 110
+      },
+      "docs": "",
+      "doc_sections": {
+        "summary": "",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "constructor",
+      "signature_text": "fn new(&'a str) -> Self",
+      "receiver": null,
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [
+        "&'a str"
+      ],
+      "return_type": "Self",
+      "return_shape": {
+        "kind": "other",
+        "inner_types": []
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::s3_audit_fixture::ExampleRecord::hidden",
+      "name": "hidden",
+      "canonical_path": "s3_audit_fixture::ExampleRecord::hidden",
+      "public_paths": [
+        "s3_audit_fixture::ExampleRecord::hidden"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": "type::s3_audit_fixture::ExampleRecord",
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 102,
+        "end_line": 104
+      },
+      "docs": "",
+      "doc_sections": {
+        "summary": "",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "inherent_method",
+      "signature_text": "fn hidden(&Self) -> usize",
+      "receiver": "&Self",
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [],
+      "return_type": "usize",
+      "return_shape": {
+        "kind": "primitive",
+        "inner_types": []
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::s3_audit_fixture::ExampleRecord::new",
+      "name": "new",
+      "canonical_path": "s3_audit_fixture::ExampleRecord::new",
+      "public_paths": [
+        "s3_audit_fixture::ExampleRecord::new"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": "type::s3_audit_fixture::ExampleRecord",
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 98,
+        "end_line": 100
+      },
+      "docs": "",
+      "doc_sections": {
+        "summary": "",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "constructor",
+      "signature_text": "fn new(&'static str, usize) -> Self",
+      "receiver": null,
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [
+        "&'static str",
+        "usize"
+      ],
+      "return_type": "Self",
+      "return_shape": {
+        "kind": "other",
+        "inner_types": []
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::s3_audit_fixture::ExampleTrait::provided",
+      "name": "provided",
+      "canonical_path": "s3_audit_fixture::ExampleTrait::provided",
+      "public_paths": [
+        "s3_audit_fixture::ExampleTrait::provided"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": null,
+      "owner_trait_id": "trait::s3_audit_fixture::ExampleTrait",
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 169,
+        "end_line": 171
+      },
+      "docs": "Provided method example.\n\n```\nuse s3_audit_fixture::{ExampleTrait, ExampleType};\n\nlet value = ExampleType::new();\nassert_eq!(ExampleTrait::provided(&value), 7);\n```",
+      "doc_sections": {
+        "summary": "Provided method example.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "trait_method",
+      "signature_text": "fn provided(&Self) -> usize",
+      "receiver": "&Self",
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [],
+      "return_type": "usize",
+      "return_shape": {
+        "kind": "primitive",
+        "inner_types": []
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::s3_audit_fixture::ExampleTrait::required",
+      "name": "required",
+      "canonical_path": "s3_audit_fixture::ExampleTrait::required",
+      "public_paths": [
+        "s3_audit_fixture::ExampleTrait::required"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": null,
+      "owner_trait_id": "trait::s3_audit_fixture::ExampleTrait",
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 159,
+        "end_line": 159
+      },
+      "docs": "Required method example.\n\n```\nuse s3_audit_fixture::{ExampleTrait, ExampleType};\n\nlet value = ExampleType::new();\nExampleTrait::required(&value);\n```",
+      "doc_sections": {
+        "summary": "Required method example.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "trait_method",
+      "signature_text": "fn required(&Self)",
+      "receiver": "&Self",
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [],
+      "return_type": null,
+      "return_shape": {
+        "kind": "unit",
+        "inner_types": []
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": false,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::s3_audit_fixture::ExampleType::named",
+      "name": "named",
+      "canonical_path": "s3_audit_fixture::ExampleType::named",
+      "public_paths": [
+        "s3_audit_fixture::ExampleType::named"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": "type::s3_audit_fixture::ExampleType",
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 78,
+        "end_line": 80
+      },
+      "docs": "Constructs the fixture type while spelling out the concrete return type.",
+      "doc_sections": {
+        "summary": "Constructs the fixture type while spelling out the concrete return type.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "constructor",
+      "signature_text": "fn named() -> ExampleType",
+      "receiver": null,
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [],
+      "return_type": "ExampleType",
+      "return_shape": {
+        "kind": "nominal",
+        "inner_types": []
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::s3_audit_fixture::ExampleType::new",
+      "name": "new",
+      "canonical_path": "s3_audit_fixture::ExampleType::new",
+      "public_paths": [
+        "s3_audit_fixture::ExampleType::new"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": "type::s3_audit_fixture::ExampleType",
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 73,
+        "end_line": 75
+      },
+      "docs": "Constructs the fixture type.",
+      "doc_sections": {
+        "summary": "Constructs the fixture type.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "constructor",
+      "signature_text": "fn new() -> Self",
+      "receiver": null,
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [],
+      "return_type": "Self",
+      "return_shape": {
+        "kind": "other",
+        "inner_types": []
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::s3_audit_fixture::ExampleType::value",
+      "name": "value",
+      "canonical_path": "s3_audit_fixture::ExampleType::value",
+      "public_paths": [
+        "s3_audit_fixture::ExampleType::value"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": "type::s3_audit_fixture::ExampleType",
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 92,
+        "end_line": 94
+      },
+      "docs": "Returns the fixed fixture value.",
+      "doc_sections": {
+        "summary": "Returns the fixed fixture value.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "inherent_method",
+      "signature_text": "fn value(&Self) -> usize",
+      "receiver": "&Self",
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [],
+      "return_type": "usize",
+      "return_shape": {
+        "kind": "primitive",
+        "inner_types": []
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::s3_audit_fixture::ExampleType::wrapped",
+      "name": "wrapped",
+      "canonical_path": "s3_audit_fixture::ExampleType::wrapped",
+      "public_paths": [
+        "s3_audit_fixture::ExampleType::wrapped"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": "type::s3_audit_fixture::ExampleType",
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 87,
+        "end_line": 89
+      },
+      "docs": "Constructs the fixture type through a thin result wrapper.\n\n# Errors\n\nReturns a fixture error when construction fails.",
+      "doc_sections": {
+        "summary": "Constructs the fixture type through a thin result wrapper.",
+        "panics": "",
+        "errors": "Returns a fixture error when construction fails.",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "constructor",
+      "signature_text": "fn wrapped() -> Result<Self, ExampleError>",
+      "receiver": null,
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [],
+      "return_type": "Result<Self, ExampleError>",
+      "return_shape": {
+        "kind": "result",
+        "inner_types": [
+          "Self",
+          "ExampleError"
+        ]
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::s3_audit_fixture::echo_str",
+      "name": "echo_str",
+      "canonical_path": "s3_audit_fixture::echo_str",
+      "public_paths": [
+        "s3_audit_fixture::echo_str"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": null,
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 184,
+        "end_line": 186
+      },
+      "docs": "Public API using lifetime elision across a single borrowed argument.",
+      "doc_sections": {
+        "summary": "Public API using lifetime elision across a single borrowed argument.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "free_function",
+      "signature_text": "fn echo_str(&str) -> &str",
+      "receiver": null,
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [
+        "&str"
+      ],
+      "return_type": "&str",
+      "return_shape": {
+        "kind": "ref",
+        "inner_types": [
+          "str"
+        ]
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::s3_audit_fixture::fixture_ffi_add",
+      "name": "fixture_ffi_add",
+      "canonical_path": "s3_audit_fixture::fixture_ffi_add",
+      "public_paths": [
+        "s3_audit_fixture::fixture_ffi_add"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": null,
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 203,
+        "end_line": 205
+      },
+      "docs": "Public extern API used to verify FFI risk-fact extraction.",
+      "doc_sections": {
+        "summary": "Public extern API used to verify FFI risk-fact extraction.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "free_function",
+      "signature_text": "fn fixture_ffi_add(i32, i32) -> i32",
+      "receiver": null,
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [
+        "i32",
+        "i32"
+      ],
+      "return_type": "i32",
+      "return_shape": {
+        "kind": "primitive",
+        "inner_types": []
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::s3_audit_fixture::panic_now",
+      "name": "panic_now",
+      "canonical_path": "s3_audit_fixture::panic_now",
+      "public_paths": [
+        "s3_audit_fixture::panic_now"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": null,
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 198,
+        "end_line": 200
+      },
+      "docs": "Public API with an explicit panic site.\n\n# Panics\n\nAlways panics for fixture coverage.",
+      "doc_sections": {
+        "summary": "Public API with an explicit panic site.",
+        "panics": "Always panics for fixture coverage.",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "free_function",
+      "signature_text": "fn panic_now()",
+      "receiver": null,
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [],
+      "return_type": null,
+      "return_shape": {
+        "kind": "unit",
+        "inner_types": []
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::s3_audit_fixture::use_trait_object",
+      "name": "use_trait_object",
+      "canonical_path": "s3_audit_fixture::use_trait_object",
+      "public_paths": [
+        "s3_audit_fixture::use_trait_object"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": null,
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 179,
+        "end_line": 181
+      },
+      "docs": "Public API using a trait object to verify trait reverse-edge extraction.",
+      "doc_sections": {
+        "summary": "Public API using a trait object to verify trait reverse-edge extraction.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "free_function",
+      "signature_text": "fn use_trait_object(&dyn ExampleTrait) -> usize",
+      "receiver": null,
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [
+        "&dyn ExampleTrait"
+      ],
+      "return_type": "usize",
+      "return_shape": {
+        "kind": "primitive",
+        "inner_types": []
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": false
+    },
+    {
+      "api_id": "api::s3_audit_fixture::uses_unsafe_block",
+      "name": "uses_unsafe_block",
+      "canonical_path": "s3_audit_fixture::uses_unsafe_block",
+      "public_paths": [
+        "s3_audit_fixture::uses_unsafe_block"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": null,
+      "owner_trait_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 189,
+        "end_line": 191
+      },
+      "docs": "Public API containing an internal unsafe block while keeping a safe header.",
+      "doc_sections": {
+        "summary": "Public API containing an internal unsafe block while keeping a safe header.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "api_kind": "free_function",
+      "signature_text": "fn uses_unsafe_block(*const u8) -> Option<u8>",
+      "receiver": null,
+      "generic_params": [],
+      "where_clauses": [],
+      "arg_types": [
+        "*const u8"
+      ],
+      "return_type": "Option<u8>",
+      "return_shape": {
+        "kind": "option",
+        "inner_types": [
+          "u8"
+        ]
+      },
+      "is_unsafe": false,
+      "is_async": false,
+      "is_const": false,
+      "has_body": true,
+      "contains_unsafe_block": true
+    }
+  ],
+  "symbols": [
+    {
+      "symbol_id": "symbol::s3_audit_fixture::ExampleType::DEFAULT_LABEL",
+      "name": "DEFAULT_LABEL",
+      "canonical_path": "s3_audit_fixture::ExampleType::DEFAULT_LABEL",
+      "public_paths": [
+        "s3_audit_fixture::ExampleType::DEFAULT_LABEL"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": "type::s3_audit_fixture::ExampleType",
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 70,
+        "end_line": 70
+      },
+      "docs": "Public inherent associated const used to verify associated-const surface extraction.\n\n# Examples\n\n```\nassert_eq!(s3_audit_fixture::ExampleType::DEFAULT_LABEL, \"fixture-label\");\n```",
+      "doc_sections": {
+        "summary": "Public inherent associated const used to verify associated-const surface extraction.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": "```\nassert_eq!(s3_audit_fixture::ExampleType::DEFAULT_LABEL, \"fixture-label\");\n```"
+      },
+      "symbol_kind": "associated_constant",
+      "signature_text": null,
+      "type_text": "&'static str",
+      "value_text": "\"fixture-label\""
+    },
+    {
+      "symbol_id": "symbol::s3_audit_fixture::SAMPLE_CONST",
+      "name": "SAMPLE_CONST",
+      "canonical_path": "s3_audit_fixture::SAMPLE_CONST",
+      "public_paths": [
+        "s3_audit_fixture::SAMPLE_CONST"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 227,
+        "end_line": 227
+      },
+      "docs": "Public constant used to verify constant extraction.\n\n# Examples\n\n```\nassert_eq!(s3_audit_fixture::SAMPLE_CONST, 7);\n```",
+      "doc_sections": {
+        "summary": "Public constant used to verify constant extraction.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": "```\nassert_eq!(s3_audit_fixture::SAMPLE_CONST, 7);\n```"
+      },
+      "symbol_kind": "constant",
+      "signature_text": null,
+      "type_text": "usize",
+      "value_text": "7usize"
+    },
+    {
+      "symbol_id": "symbol::s3_audit_fixture::fixture_macro",
+      "name": "fixture_macro",
+      "canonical_path": "s3_audit_fixture::fixture_macro",
+      "public_paths": [
+        "s3_audit_fixture::fixture_macro"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "owner_type_id": null,
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 214,
+        "end_line": 218
+      },
+      "docs": "Public macro used to verify macro extraction.\n\n```\nlet value = s3_audit_fixture::fixture_macro!(3);\nassert_eq!(value, 3);\n```",
+      "doc_sections": {
+        "summary": "Public macro used to verify macro extraction.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "symbol_kind": "macro",
+      "signature_text": "macro_rules! fixture_macro {\n    ($value:expr) => { ... };\n}",
+      "type_text": null,
+      "value_text": null
+    }
+  ],
+  "trait_registry": [
+    {
+      "trait_id": "trait::s3_audit_fixture::ExampleAssocConst",
+      "name": "ExampleAssocConst",
+      "canonical_path": "s3_audit_fixture::ExampleAssocConst",
+      "public_paths": [
+        "s3_audit_fixture::ExampleAssocConst"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 139,
+        "end_line": 142
+      },
+      "docs": "Public trait used to verify associated const extraction.\n\n# Examples\n\n```\nuse s3_audit_fixture::{ExampleAssocConst, ExampleType};\n\nassert_eq!(<ExampleType as ExampleAssocConst>::LABEL, \"fixture\");\nassert_eq!(<ExampleType as ExampleAssocConst>::DEFAULT_LIMIT, 7);\n```",
+      "doc_sections": {
+        "summary": "Public trait used to verify associated const extraction.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": "```\nuse s3_audit_fixture::{ExampleAssocConst, ExampleType};\n\nassert_eq!(<ExampleType as ExampleAssocConst>::LABEL, \"fixture\");\nassert_eq!(<ExampleType as ExampleAssocConst>::DEFAULT_LIMIT, 7);\n```"
+      },
+      "origin": "local",
+      "exposure_kinds": [
+        "defined"
+      ],
+      "is_unsafe": false,
+      "direct_supertrait_ids": [],
+      "required_methods": [],
+      "provided_methods": [],
+      "associated_type_defs": [],
+      "associated_const_defs": [
+        {
+          "name": "LABEL",
+          "type_text": "&'static str",
+          "default_value_text": null,
+          "source": {
+            "file": "src/lib.rs",
+            "start_line": 140,
+            "end_line": 140
+          }
+        },
+        {
+          "name": "DEFAULT_LIMIT",
+          "type_text": "usize",
+          "default_value_text": "7",
+          "source": {
+            "file": "src/lib.rs",
+            "start_line": 141,
+            "end_line": 141
+          }
+        }
+      ],
+      "used_by_api_ids": [],
+      "used_by_trait_ids": [],
+      "used_by_type_ids": []
+    },
+    {
+      "trait_id": "trait::s3_audit_fixture::ExampleTrait",
+      "name": "ExampleTrait",
+      "canonical_path": "s3_audit_fixture::ExampleTrait",
+      "public_paths": [
+        "s3_audit_fixture::ExampleTrait"
+      ],
+      "public_anchor_module_id": "mod::s3_audit_fixture",
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 150,
+        "end_line": 172
+      },
+      "docs": "Public trait used to verify trait-method extraction.",
+      "doc_sections": {
+        "summary": "Public trait used to verify trait-method extraction.",
+        "panics": "",
+        "errors": "",
+        "safety": "",
+        "examples": ""
+      },
+      "origin": "local",
+      "exposure_kinds": [
+        "defined",
+        "bound"
+      ],
+      "is_unsafe": false,
+      "direct_supertrait_ids": [],
+      "required_methods": [
+        "required"
+      ],
+      "provided_methods": [
+        "provided"
+      ],
+      "associated_type_defs": [],
+      "associated_const_defs": [],
+      "used_by_api_ids": [
+        "api::s3_audit_fixture::use_trait_object"
+      ],
+      "used_by_trait_ids": [],
+      "used_by_type_ids": []
+    }
+  ],
+  "trait_impl_registry": [
+    {
+      "trait_impl_id": "trait_impl::core::marker::Send::for::ExampleSend",
+      "target_type_id": "type::s3_audit_fixture::ExampleSend",
+      "trait_ref_text": "core::marker::Send",
+      "for_type_text": "ExampleSend",
+      "trait_id": "trait::core::marker::Send",
+      "trait_name": "Send",
+      "trait_canonical_path": "core::marker::Send",
+      "trait_origin": "external",
+      "source": {
+        "file": "src/lib.rs",
+        "start_line": 127,
+        "end_line": 127
+      },
+      "associated_type_bindings": [],
+      "associated_const_bindings": [],
+      "where_clauses": [],
+      "cfg_attrs": [],
+      "is_unsafe": true
+    },
+    {
+      "trait_impl_id": "trait_impl::core::ops::drop::Drop::for::ExampleDrop",
+      "target_type_id": "type::s3_audit_fixture::ExampleDrop",
+      "trait_ref_text": "core::ops::drop::Drop",
+      "for_type_text": "ExampleDrop",
+      "trait_id": "trait::core::ops::drop::Drop",
+      "trait_name": "Drop",
+      "trait_canonical_path": "core::ops::drop::Drop",
+      "trait_origin": "external",
+      "source": {
+        "file": "src/lib.rs",
+        "start_line": 117,
+        "end_line": 119
+      },
+      "associated_type_bindings": [],
+      "associated_const_bindings": [],
+      "where_clauses": [],
+      "cfg_attrs": [],
+      "is_unsafe": false
+    },
+    {
+      "trait_impl_id": "trait_impl::core::ops::drop::Drop::for::ExampleDropPanic",
+      "target_type_id": "type::s3_audit_fixture::ExampleDropPanic",
+      "trait_ref_text": "core::ops::drop::Drop",
+      "for_type_text": "ExampleDropPanic",
+      "trait_id": "trait::core::ops::drop::Drop",
+      "trait_name": "Drop",
+      "trait_canonical_path": "core::ops::drop::Drop",
+      "trait_origin": "external",
+      "source": {
+        "file": "src/lib.rs",
+        "start_line": 121,
+        "end_line": 125
+      },
+      "associated_type_bindings": [],
+      "associated_const_bindings": [],
+      "where_clauses": [],
+      "cfg_attrs": [],
+      "is_unsafe": false
+    },
+    {
+      "trait_impl_id": "trait_impl::s3_audit_fixture::ExampleAssocConst::for::ExampleType",
+      "target_type_id": "type::s3_audit_fixture::ExampleType",
+      "trait_ref_text": "s3_audit_fixture::ExampleAssocConst",
+      "for_type_text": "ExampleType",
+      "trait_id": "trait::s3_audit_fixture::ExampleAssocConst",
+      "trait_name": "ExampleAssocConst",
+      "trait_canonical_path": "s3_audit_fixture::ExampleAssocConst",
+      "trait_origin": "local",
+      "source": {
+        "file": "src/lib.rs",
+        "start_line": 145,
+        "end_line": 147
+      },
+      "associated_type_bindings": [],
+      "associated_const_bindings": [
+        {
+          "name": "LABEL",
+          "value_text": "\"fixture\"",
+          "source": {
+            "file": "src/lib.rs",
+            "start_line": 146,
+            "end_line": 146
+          }
+        }
+      ],
+      "where_clauses": [],
+      "cfg_attrs": [
+        "#[cfg(unix)]"
+      ],
+      "is_unsafe": false
+    },
+    {
+      "trait_impl_id": "trait_impl::s3_audit_fixture::ExampleTrait::for::ExampleType",
+      "target_type_id": "type::s3_audit_fixture::ExampleType",
+      "trait_ref_text": "s3_audit_fixture::ExampleTrait",
+      "for_type_text": "ExampleType",
+      "trait_id": "trait::s3_audit_fixture::ExampleTrait",
+      "trait_name": "ExampleTrait",
+      "trait_canonical_path": "s3_audit_fixture::ExampleTrait",
+      "trait_origin": "local",
+      "source": {
+        "file": "src/lib.rs",
+        "start_line": 174,
+        "end_line": 176
+      },
+      "associated_type_bindings": [],
+      "associated_const_bindings": [],
+      "where_clauses": [],
+      "cfg_attrs": [],
+      "is_unsafe": false
+    }
+  ],
+  "examples": [
+    {
+      "example_id": "ex::src/lib.rs::139::1",
+      "anchor": {
+        "trait": "trait::s3_audit_fixture::ExampleAssocConst"
+      },
+      "involved_api_ids": [],
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 139,
+        "end_line": 142
+      },
+      "snippet": "use s3_audit_fixture::{ExampleAssocConst, ExampleType};\n\nassert_eq!(<ExampleType as ExampleAssocConst>::LABEL, \"fixture\");\nassert_eq!(<ExampleType as ExampleAssocConst>::DEFAULT_LIMIT, 7);"
+    },
+    {
+      "example_id": "ex::src/lib.rs::159::1",
+      "anchor": {
+        "api": "api::s3_audit_fixture::ExampleTrait::required"
+      },
+      "involved_api_ids": [
+        "api::s3_audit_fixture::ExampleTrait::required",
+        "api::s3_audit_fixture::ExampleType::new"
+      ],
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 159,
+        "end_line": 159
+      },
+      "snippet": "use s3_audit_fixture::{ExampleTrait, ExampleType};\n\nlet value = ExampleType::new();\nExampleTrait::required(&value);"
+    },
+    {
+      "example_id": "ex::src/lib.rs::169::1",
+      "anchor": {
+        "api": "api::s3_audit_fixture::ExampleTrait::provided"
+      },
+      "involved_api_ids": [
+        "api::s3_audit_fixture::ExampleTrait::provided",
+        "api::s3_audit_fixture::ExampleType::new"
+      ],
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 169,
+        "end_line": 171
+      },
+      "snippet": "use s3_audit_fixture::{ExampleTrait, ExampleType};\n\nlet value = ExampleType::new();\nassert_eq!(ExampleTrait::provided(&value), 7);"
+    },
+    {
+      "example_id": "ex::src/lib.rs::1::1",
+      "anchor": {
+        "module": "mod::s3_audit_fixture"
+      },
+      "involved_api_ids": [
+        "api::s3_audit_fixture::ExampleType::new"
+      ],
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 1,
+        "end_line": 227
+      },
+      "snippet": "use s3_audit_fixture::ExampleType;\n\nlet value = ExampleType::new();\nassert_eq!(value.value(), 7);"
+    },
+    {
+      "example_id": "ex::src/lib.rs::1::2",
+      "anchor": {
+        "module": "mod::s3_audit_fixture"
+      },
+      "involved_api_ids": [],
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 1,
+        "end_line": 227
+      },
+      "snippet": "use s3_audit_fixture::SAMPLE_CONST;\n\nassert_eq!(SAMPLE_CONST, 7);"
+    },
+    {
+      "example_id": "ex::src/lib.rs::214::1",
+      "anchor": {
+        "symbol": "symbol::s3_audit_fixture::fixture_macro"
+      },
+      "involved_api_ids": [],
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 214,
+        "end_line": 218
+      },
+      "snippet": "let value = s3_audit_fixture::fixture_macro!(3);\nassert_eq!(value, 3);"
+    },
+    {
+      "example_id": "ex::src/lib.rs::227::1",
+      "anchor": {
+        "symbol": "symbol::s3_audit_fixture::SAMPLE_CONST"
+      },
+      "involved_api_ids": [],
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 227,
+        "end_line": 227
+      },
+      "snippet": "assert_eq!(s3_audit_fixture::SAMPLE_CONST, 7);"
+    },
+    {
+      "example_id": "ex::src/lib.rs::24::1",
+      "anchor": {
+        "type": "type::s3_audit_fixture::ExampleType"
+      },
+      "involved_api_ids": [
+        "api::s3_audit_fixture::ExampleType::new"
+      ],
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 24,
+        "end_line": 24
+      },
+      "snippet": "let value = s3_audit_fixture::ExampleType::new();\nassert_eq!(value.value(), 7);"
+    },
+    {
+      "example_id": "ex::src/lib.rs::70::1",
+      "anchor": {
+        "symbol": "symbol::s3_audit_fixture::ExampleType::DEFAULT_LABEL"
+      },
+      "involved_api_ids": [],
+      "code_ref": {
+        "file": "src/lib.rs",
+        "start_line": 70,
+        "end_line": 70
+      },
+      "snippet": "assert_eq!(s3_audit_fixture::ExampleType::DEFAULT_LABEL, \"fixture-label\");"
+    }
+  ],
+  "risk_facts": {
+    "extern_abi_apis": [
+      {
+        "api_id": "api::s3_audit_fixture::fixture_ffi_add",
+        "abi": "C",
+        "source": {
+          "file": "src/lib.rs",
+          "start_line": 203,
+          "end_line": 205
+        }
+      }
+    ],
+    "repr_types": [
+      {
+        "type_id": "type::s3_audit_fixture::ExampleTransparent",
+        "repr_kinds": [
+          "transparent"
+        ],
+        "source": {
+          "file": "src/lib.rs",
+          "start_line": 51,
+          "end_line": 51
+        }
+      }
+    ],
+    "drop_impl_types": [
+      "type::s3_audit_fixture::ExampleDrop",
+      "type::s3_audit_fixture::ExampleDropPanic"
+    ],
+    "explicit_panic_sites": [
+      {
+        "owner": {
+          "api": "api::s3_audit_fixture::panic_now"
+        },
+        "panic_kind": "panic!",
+        "source": {
+          "file": "src/lib.rs",
+          "start_line": 198,
+          "end_line": 200
+        }
+      },
+      {
+        "owner": {
+          "trait_impl": "trait_impl::core::ops::drop::Drop::for::ExampleDropPanic"
+        },
+        "panic_kind": "panic!",
+        "source": {
+          "file": "src/lib.rs",
+          "start_line": 121,
+          "end_line": 125
+        }
+      }
+    ],
+    "borrowed_return_apis": [
+      {
+        "api_id": "api::s3_audit_fixture::ExampleHolder::as_str",
+        "return_type_text": "&str",
+        "from_self": true,
+        "from_arg_positions": [],
+        "lifetime_names": [],
+        "source": {
+          "file": "src/lib.rs",
+          "start_line": 112,
+          "end_line": 114
+        }
+      },
+      {
+        "api_id": "api::s3_audit_fixture::echo_str",
+        "return_type_text": "&str",
+        "from_self": false,
+        "from_arg_positions": [
+          0
+        ],
+        "lifetime_names": [],
+        "source": {
+          "file": "src/lib.rs",
+          "start_line": 184,
+          "end_line": 186
+        }
+      }
+    ]
+  }
+}

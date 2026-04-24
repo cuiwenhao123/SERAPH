@@ -2,7 +2,6 @@
 members = [
   "crates/seraph-types",
   "crates/s3-extract",
-  "crates/s3-model",
   "crates/s3-context",
   "crates/s3-coverage",
   "crates/seraph-cli",

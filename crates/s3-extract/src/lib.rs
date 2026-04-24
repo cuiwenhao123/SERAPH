@@ -3533,17 +3533,93 @@ fn constant_value_text(item: &RustdocItem) -> Option<String> {
 }
 
 fn where_clause_strings(generics_value: Option<&Value>) -> Vec<String> {
-    generics_value
+    let mut predicates = inline_generic_param_bound_strings(generics_value);
+
+    if let Some(where_predicates) = generics_value
         .and_then(|generics| generics.get("where_predicates"))
         .and_then(Value::as_array)
-        .map(|predicates| {
-            predicates
+    {
+        for predicate in where_predicates
+            .iter()
+            .map(render_where_predicate)
+            .filter(|predicate| !predicate.is_empty())
+        {
+            if !predicates.contains(&predicate) {
+                predicates.push(predicate);
+            }
+        }
+    }
+
+    predicates
+}
+
+fn inline_generic_param_bound_strings(generics_value: Option<&Value>) -> Vec<String> {
+    generics_value
+        .and_then(|generics| generics.get("params"))
+        .and_then(Value::as_array)
+        .map(|params| {
+            params
                 .iter()
-                .map(render_where_predicate)
-                .filter(|predicate| !predicate.is_empty())
+                .filter_map(render_inline_generic_param_bound)
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn render_inline_generic_param_bound(param: &Value) -> Option<String> {
+    let name = param.get("name").and_then(Value::as_str)?;
+    let kind = param.get("kind").and_then(Value::as_object)?;
+
+    if let Some(type_param) = kind.get("type").and_then(Value::as_object) {
+        if type_param
+            .get("is_synthetic")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return None;
+        }
+
+        let bounds = type_param
+            .get("bounds")
+            .and_then(Value::as_array)
+            .map(|bounds| {
+                bounds
+                    .iter()
+                    .map(render_generic_bound)
+                    .filter(|bound| !bound.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            })
+            .unwrap_or_default();
+
+        return if bounds.is_empty() {
+            None
+        } else {
+            Some(format!("{name}: {bounds}"))
+        };
+    }
+
+    if let Some(lifetime_param) = kind.get("lifetime").and_then(Value::as_object) {
+        let bounds = lifetime_param
+            .get("outlives")
+            .and_then(Value::as_array)
+            .map(|bounds| {
+                bounds
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            })
+            .unwrap_or_default();
+
+        return if bounds.is_empty() {
+            None
+        } else {
+            Some(format!("{name}: {bounds}"))
+        };
+    }
+
+    None
 }
 
 fn render_where_predicate(predicate: &Value) -> String {
@@ -5318,6 +5394,77 @@ mod tests {
         assert_eq!(
             generic_param_names(Some(&generics)),
             vec!["'a".to_owned(), "T".to_owned()]
+        );
+    }
+
+    #[test]
+    fn where_clause_strings_include_inline_type_param_bounds() {
+        let generics = json!({
+            "params": [
+                {
+                    "name": "A",
+                    "kind": {
+                        "type": {
+                            "bounds": [
+                                {
+                                    "trait_bound": {
+                                        "trait": {
+                                            "path": "NoUninit",
+                                            "id": 1,
+                                            "args": {
+                                                "angle_bracketed": {
+                                                    "args": [],
+                                                    "constraints": []
+                                                }
+                                            }
+                                        },
+                                        "generic_params": [],
+                                        "modifier": "none"
+                                    }
+                                }
+                            ],
+                            "default": null,
+                            "is_synthetic": false
+                        }
+                    }
+                },
+                {
+                    "name": "B",
+                    "kind": {
+                        "type": {
+                            "bounds": [
+                                {
+                                    "trait_bound": {
+                                        "trait": {
+                                            "path": "AnyBitPattern",
+                                            "id": 2,
+                                            "args": {
+                                                "angle_bracketed": {
+                                                    "args": [],
+                                                    "constraints": []
+                                                }
+                                            }
+                                        },
+                                        "generic_params": [],
+                                        "modifier": "none"
+                                    }
+                                }
+                            ],
+                            "default": null,
+                            "is_synthetic": false
+                        }
+                    }
+                }
+            ],
+            "where_predicates": []
+        });
+
+        assert_eq!(
+            where_clause_strings(Some(&generics)),
+            vec![
+                "A: NoUninit".to_owned(),
+                "B: AnyBitPattern".to_owned()
+            ]
         );
     }
 }

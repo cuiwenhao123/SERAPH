@@ -1,0 +1,33 @@
+{
+  "crate_meta": {
+    "package_name": "fixture_crate",
+    "lib_target_name": "fixture_crate",
+    "crate_import_name": "fixture_crate",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "repository": null,
+    "manifest_path": "/tmp/fixture/Cargo.toml",
+    "lib_rs_path": "/tmp/fixture/src/lib.rs",
+    "default_features": [],
+    "cargo_description": "Fixture crate",
+    "root_docs": "Fixture crate docs.",
+    "root_doc_sections": {"summary": "Fixture crate docs.", "panics": "", "errors": "", "safety": "", "examples": ""}
+  },
+  "modules": [
+    {"module_id": "mod::fixture_crate", "name": "fixture_crate", "canonical_path": "fixture_crate", "public_paths": ["fixture_crate"], "parent_module_id": null, "code_ref": {"file": "src/lib.rs", "line": 1, "column": 1}, "docs": "", "doc_sections": {"summary": "", "panics": "", "errors": "", "safety": "", "examples": ""}}
+  ],
+  "types": [
+    {"type_id": "type::fixture_crate::Buffer", "name": "Buffer", "canonical_path": "fixture_crate::Buffer", "public_paths": ["fixture_crate::Buffer"], "public_anchor_module_id": "mod::fixture_crate", "code_ref": {"file": "src/lib.rs", "line": 3, "column": 1}, "docs": "Mutable byte buffer.", "doc_sections": {"summary": "Mutable byte buffer.", "panics": "", "errors": "", "safety": "", "examples": ""}, "kind": "struct", "generic_params": [], "where_clauses": [], "is_non_exhaustive": false, "fields": [], "variants": [], "has_hidden_fields": true, "has_hidden_variants": false}
+  ],
+  "apis": [
+    {"api_id": "fn::fixture_crate::Buffer::new", "name": "new", "canonical_path": "fixture_crate::Buffer::new", "public_paths": ["fixture_crate::Buffer::new"], "module_id": "mod::fixture_crate", "owner_type_id": "type::fixture_crate::Buffer", "code_ref": {"file": "src/lib.rs", "line": 7, "column": 5}, "docs": "Creates an empty buffer.", "doc_sections": {"summary": "Creates an empty buffer.", "panics": "", "errors": "", "safety": "", "examples": ""}, "signature": "pub fn new() -> Buffer", "receiver": null, "return_type": "Buffer", "generic_params": [], "where_clauses": [], "is_unsafe": false},
+    {"api_id": "fn::fixture_crate::Buffer::push", "name": "push", "canonical_path": "fixture_crate::Buffer::push", "public_paths": ["fixture_crate::Buffer::push"], "module_id": "mod::fixture_crate", "owner_type_id": "type::fixture_crate::Buffer", "code_ref": {"file": "src/lib.rs", "line": 11, "column": 5}, "docs": "Pushes bytes into the buffer.", "doc_sections": {"summary": "Pushes bytes into the buffer.", "panics": "", "errors": "", "safety": "", "examples": ""}, "signature": "pub fn push(&mut self, bytes: &[u8])", "receiver": "&mut self", "return_type": "()", "generic_params": [], "where_clauses": [], "is_unsafe": false},
+    {"api_id": "fn::fixture_crate::Buffer::get_unchecked", "name": "get_unchecked", "canonical_path": "fixture_crate::Buffer::get_unchecked", "public_paths": ["fixture_crate::Buffer::get_unchecked"], "module_id": "mod::fixture_crate", "owner_type_id": "type::fixture_crate::Buffer", "code_ref": {"file": "src/lib.rs", "line": 15, "column": 5}, "docs": "Reads a byte without bounds checks.\n\n# Safety\nThe index must be in bounds.", "doc_sections": {"summary": "Reads a byte without bounds checks.", "panics": "", "errors": "", "safety": "The index must be in bounds.", "examples": ""}, "signature": "pub unsafe fn get_unchecked(&self, index: usize) -> u8", "receiver": "&self", "return_type": "u8", "generic_params": [], "where_clauses": [], "is_unsafe": true}
+  ],
+  "symbols": [],
+  "trait_registry": [],
+  "trait_impl_registry": [],
+  "examples": [],
+  "risk_facts": {"unsafe_functions": ["fn::fixture_crate::Buffer::get_unchecked"], "unsafe_blocks": [], "ffi_functions": [], "panic_sites": []}
+}
