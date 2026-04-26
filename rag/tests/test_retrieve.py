@@ -42,10 +42,21 @@ def test_render_context_markdown_surfaces_variant_opportunities():
     target = rank_unsafe_targets(graph)[0]
 
     markdown = render_context_markdown(knowledge, graph, target)
+    variant_section = markdown.split("## Variant Opportunities", 1)[1].split(
+        "## Similar API Usage", 1
+    )[0]
 
     assert "## Variant Opportunities" in markdown
     assert "### Setup Choices" in markdown
     assert "### Input Shaping Choices" in markdown
+    assert "### State Progression Choices" in markdown
+    assert "### Boundary Choices" in markdown
+    assert "- setup API fixture_crate::Buffer::new produces fixture_crate::Buffer" in variant_section
+    assert "- target signature includes argument type usize" in variant_section
+    assert "- related mutator available before target: fixture_crate::Buffer::push" in variant_section
+    assert "- documented safety precondition: The index must be in bounds." in variant_section
+    assert "call the target immediately" not in variant_section
+    assert "prefer documented recoverable boundaries" not in variant_section
 
 
 def test_render_context_markdown_surfaces_compile_critical_import_trait_and_enum_facts():

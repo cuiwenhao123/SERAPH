@@ -898,44 +898,38 @@ def _collect_variant_opportunities(
     related_apis: List[Dict[str, Any]],
 ) -> Dict[str, List[str]]:
     setup_choices = [
-        "{} via {}".format(_api_display_path(entry["api"]), ", ".join(entry["produced_types"]))
+        "setup API {} produces {}".format(
+            _api_display_path(entry["api"]),
+            ", ".join(entry["produced_types"]),
+        )
         for entry in setup_entries[:3]
         if entry["produced_types"]
     ]
 
-    arg_types = [str(arg_type) for arg_type in target_api.get("arg_types", [])]
-    has_byte_like_arg = any("[u8]" in arg_type or "Vec<u8>" in arg_type or "str" in arg_type for arg_type in arg_types)
-    has_numeric_arg = any("usize" in arg_type or "u32" in arg_type or "u64" in arg_type for arg_type in arg_types)
-
-    input_choices: List[str] = []
-    if has_byte_like_arg:
-        input_choices.extend(
-            [
-                "feed raw stdin bytes directly into byte-oriented arguments",
-                "use a bounded prefix of the fuzz input for shorter boundary-oriented calls",
-            ]
-        )
-    if has_numeric_arg:
-        input_choices.extend(
-            [
-                "derive small numeric boundary values from the fuzz input",
-                "clamp numeric values to public-length or capacity bounds before the target call",
-            ]
-        )
+    input_choices = [
+        "target signature includes argument type {}".format(arg_type)
+        for arg_type in _target_argument_types(target_api)
+    ]
 
     state_choices = [
-        "call the target immediately after minimal setup",
+        "related mutator available before target: {}".format(_api_display_path(api))
+        for api in related_apis
+        if api.get("receiver") in {"&mut Self", "&mut self"}
     ]
-    if any(api.get("receiver") in {"&mut Self", "&mut self"} for api in related_apis):
-        state_choices.append("apply one public mutator before calling the target")
 
-    boundary_choices = [
-        "prefer documented recoverable boundaries over invented invalid states",
-    ]
-    if has_byte_like_arg:
-        boundary_choices.insert(
-            0,
-            "exercise empty or one-byte inputs when the target accepts externally supplied bytes",
+    boundary_choices: List[str] = []
+    doc_sections = target_api.get("doc_sections") or {}
+    if doc_sections.get("safety"):
+        boundary_choices.append(
+            "documented safety precondition: {}".format(_one_line(str(doc_sections["safety"])))
+        )
+    if doc_sections.get("errors"):
+        boundary_choices.append(
+            "documented error condition: {}".format(_one_line(str(doc_sections["errors"])))
+        )
+    if doc_sections.get("panics"):
+        boundary_choices.append(
+            "documented panic condition: {}".format(_one_line(str(doc_sections["panics"])))
         )
 
     return {
@@ -1031,6 +1025,65 @@ def _api_signature_display(api: Dict[str, Any]) -> str:
     if re.match(r"^(?:pub\s+)?unsafe\b", signature):
         return signature
     return signature.replace("fn ", "unsafe fn ", 1)
+
+
+def _target_argument_types(api: Dict[str, Any]) -> List[str]:
+    structured_arg_types = [str(arg_type).strip() for arg_type in (api.get("arg_types") or []) if str(arg_type).strip()]
+    if structured_arg_types:
+        return structured_arg_types
+
+    signature = str(api.get("signature") or api.get("signature_text") or "").strip()
+    if not signature or "(" not in signature:
+        return []
+
+    start = signature.find("(")
+    depth = 0
+    end = -1
+    for index in range(start, len(signature)):
+        char = signature[index]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                end = index
+                break
+    if end == -1:
+        return []
+
+    args_block = signature[start + 1 : end].strip()
+    if not args_block:
+        return []
+
+    args: List[str] = []
+    current: List[str] = []
+    nested_depth = 0
+    for char in args_block:
+        if char == "," and nested_depth == 0:
+            arg = "".join(current).strip()
+            if arg:
+                args.append(arg)
+            current = []
+            continue
+        current.append(char)
+        if char in "(<[":
+            nested_depth += 1
+        elif char in ")>]":
+            nested_depth = max(0, nested_depth - 1)
+    tail = "".join(current).strip()
+    if tail:
+        args.append(tail)
+
+    extracted = []
+    for arg in args:
+        normalized = arg.strip()
+        if normalized in {"self", "&self", "&mut self"}:
+            continue
+        if ":" in normalized:
+            normalized = normalized.split(":", 1)[1].strip()
+        if normalized:
+            extracted.append(normalized)
+    return extracted
 
 
 def _trait_method_impl_signature(api: Dict[str, Any]) -> str:
