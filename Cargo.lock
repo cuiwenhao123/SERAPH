@@ -39,6 +39,10 @@ version = "0.1.0"
 [[package]]
 name = "s3-coverage"
 version = "0.1.0"
+dependencies = [
+ "seraph-types",
+ "serde_json",
+]
 
 [[package]]
 name = "s3-extract"
@@ -52,6 +56,10 @@ dependencies = [
 [[package]]
 name = "seraph-cli"
 version = "0.1.0"
+dependencies = [
+ "s3-coverage",
+ "serde_json",
+]
 
 [[package]]
 name = "seraph-types"

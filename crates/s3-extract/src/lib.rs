@@ -3469,12 +3469,7 @@ fn generic_param_names(generics_value: Option<&Value>) -> Vec<String> {
     generics_value
         .and_then(|generics| generics.get("params"))
         .and_then(Value::as_array)
-        .map(|params| {
-            params
-                .iter()
-                .filter_map(generic_param_name)
-                .collect()
-        })
+        .map(|params| params.iter().filter_map(generic_param_name).collect())
         .unwrap_or_default()
 }
 
@@ -5461,10 +5456,7 @@ mod tests {
 
         assert_eq!(
             where_clause_strings(Some(&generics)),
-            vec![
-                "A: NoUninit".to_owned(),
-                "B: AnyBitPattern".to_owned()
-            ]
+            vec!["A: NoUninit".to_owned(), "B: AnyBitPattern".to_owned()]
         );
     }
 }

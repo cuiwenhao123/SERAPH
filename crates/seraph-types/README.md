@@ -10,3 +10,10 @@ Planned responsibilities:
 - Coverage and stage artifact structures retained by the current orchestration layer
 - `coverage.json` structures
 - stage input and output structures
+
+Current coverage schema keeps backward compatibility while allowing Phase 3 orchestration to persist:
+
+- target-level coverage state
+- related/setup API static coverage state
+- per-harness compile/runtime summaries
+- optional legacy scenario/mapping/plan ids

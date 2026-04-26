@@ -7,10 +7,10 @@ This document describes the current SERAPH execution flow after the v5.1 Phase 2
 | Phase | Component | Language | Input | Output |
 |-------|-----------|----------|-------|--------|
 | Phase 1 | `s3-extract` | Rust | target crate `Cargo.toml` | `workspace/knowledge.json` |
-| Phase 2A | `seraph_rag.cli index` | Python | `knowledge.json` | `workspace/vectordb/` |
-| Phase 2B | `seraph_rag.cli graph` | Python | `knowledge.json` | `workspace/graph.pkl` |
-| Phase 2C | `seraph_rag.cli targets` | Python | `graph.pkl` | ranked unsafe target list |
-| Phase 2D | `seraph_rag.cli retrieve` | Python | `knowledge.json`, `vectordb/`, `graph.pkl` | `workspace/contexts/rag_target_RRR.md` |
+| Phase 2A | `seraph-cli phase2 index` | Python | `knowledge.json` | `workspace/vectordb/` |
+| Phase 2B | `seraph-cli phase2 graph` | Python | `knowledge.json` | `workspace/graph.pkl` |
+| Phase 2C | `seraph-cli phase2 targets` | Python | `graph.pkl` | ranked unsafe target list |
+| Phase 2D | `seraph-cli phase2 retrieve` | Python | `knowledge.json`, `vectordb/`, `graph.pkl` | `workspace/contexts/rag_target_RRR.md` |
 
 ## Removed From Active Path
 
@@ -27,14 +27,21 @@ python3 -m pip install --user -e 'rag[test]'
 The current embedding backend defaults to deterministic local hashing. No external model is required:
 
 ```bash
-export SERAPH_EMBEDDER=hashing
+export SERAPH_EMBEDDING_BACKEND=hashing
 export PYTHONPATH="$PWD/rag"
 ```
+
+Phase 2 RAG reads the embedding configuration only:
+
+- `SERAPH_EMBEDDING_BACKEND`
+- optional `SERAPH_EMBEDDING_MODEL`
+
+Legacy `SERAPH_EMBEDDER` remains accepted as a backward-compatible alias.
 
 ## One-Command Fixture Smoke Test
 
 ```bash
-SERAPH_EMBEDDER=hashing PYTHONPATH="$PWD/rag" scripts/run.sh \
+SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
   --knowledge rag/tests/fixtures/s3_audit_fixture_knowledge.json \
   --workspace-dir /tmp/seraph-phase2-smoke \
   --round 1
@@ -61,7 +68,7 @@ cargo run -p s3-extract -- \
 ### 2. Build the vector DB
 
 ```bash
-PYTHONPATH="$PWD/rag" python3 -m seraph_rag.cli index \
+cargo run -p seraph-cli -- phase2 index \
   --knowledge workspace/knowledge.json \
   --vectordb workspace/vectordb
 ```
@@ -74,7 +81,7 @@ The vector DB contains:
 ### 3. Build the semantic graph
 
 ```bash
-PYTHONPATH="$PWD/rag" python3 -m seraph_rag.cli graph \
+cargo run -p seraph-cli -- phase2 graph \
   --knowledge workspace/knowledge.json \
   --graph workspace/graph.pkl
 ```
@@ -94,7 +101,7 @@ Unsafe API nodes also receive an `unsafe_context_subgraph` based on 2-hop undire
 ### 4. Inspect unsafe targets
 
 ```bash
-PYTHONPATH="$PWD/rag" python3 -m seraph_rag.cli targets \
+cargo run -p seraph-cli -- phase2 targets \
   --graph workspace/graph.pkl
 ```
 
@@ -108,7 +115,7 @@ Targets are ranked by:
 ### 5. Retrieve RAG context
 
 ```bash
-PYTHONPATH="$PWD/rag" python3 -m seraph_rag.cli retrieve \
+cargo run -p seraph-cli -- phase2 retrieve \
   --knowledge workspace/knowledge.json \
   --graph workspace/graph.pkl \
   --vectordb workspace/vectordb \
@@ -126,10 +133,10 @@ The context includes:
 
 ## Convenience Wrapper
 
-`scripts/run.sh` wraps the current Phase 1/2 path:
+`seraph-cli run` wraps the current Phase 1/2 path:
 
 ```bash
-SERAPH_EMBEDDER=hashing PYTHONPATH="$PWD/rag" scripts/run.sh \
+SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
   --manifest-path /path/to/target/Cargo.toml \
   --workspace-dir workspace \
   --round 1
@@ -138,7 +145,7 @@ SERAPH_EMBEDDER=hashing PYTHONPATH="$PWD/rag" scripts/run.sh \
 If `knowledge.json` already exists:
 
 ```bash
-SERAPH_EMBEDDER=hashing PYTHONPATH="$PWD/rag" scripts/run.sh \
+SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
   --knowledge workspace/knowledge.json \
   --workspace-dir workspace \
   --round 1
@@ -151,14 +158,14 @@ Use `--dry-run` to inspect commands without executing them.
 ```bash
 cargo test --workspace
 cd rag && pytest -q
-scripts/dev/test-run-sh-rag.sh
+cargo test -p seraph-cli --test run_dry_run
 ```
 
 For the real fixture smoke:
 
 ```bash
 rm -rf /tmp/seraph-real-fixture-rag
-SERAPH_EMBEDDER=hashing PYTHONPATH="$PWD/rag" scripts/run.sh \
+SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
   --knowledge rag/tests/fixtures/s3_audit_fixture_knowledge.json \
   --workspace-dir /tmp/seraph-real-fixture-rag \
   --round 4
@@ -172,6 +179,19 @@ api::s3_audit_fixture::uses_unsafe_block
 
 ## Notes
 
-- Rebuild `workspace/vectordb/` whenever `SERAPH_EMBEDDER` changes.
+- Rebuild `workspace/vectordb/` whenever `SERAPH_EMBEDDING_BACKEND` changes.
 - Do not call ChromaDB `query_texts` directly against SERAPH collections; use SERAPH retrieval helpers so query embeddings match indexed embeddings.
 - Runtime artifacts under `workspace/` are ignored by git.
+
+## Unified Run Entry
+
+Use the single unified run entry:
+
+```bash
+cargo run -p seraph-cli -- run \
+  --knowledge workspace/knowledge.json \
+  --workspace-dir workspace \
+  --round 1
+```
+
+The Python `seraph_rag.cli` commands remain internal implementation entrypoints for development and debugging.

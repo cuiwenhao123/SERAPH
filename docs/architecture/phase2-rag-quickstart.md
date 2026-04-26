@@ -51,10 +51,23 @@ No external embedding model is required for the current Phase 2 prototype.
 
 By default, SERAPH uses `HashingEmbedder(dimensions=128)`, a deterministic local fallback implemented in `rag/seraph_rag/embeddings.py`. This means Phase 2 can run without configuring UniXcoder, Transformers, PyTorch, GPU drivers, or model download credentials.
 
-The backend is selected with `SERAPH_EMBEDDER`:
+Phase 2 RAG reads embedding configuration only. It does not read Phase 3 LLM configuration.
+
+Preferred embedding environment variables:
+
+- `SERAPH_EMBEDDING_BACKEND`
+- `SERAPH_EMBEDDING_BASE_URL`
+- `SERAPH_EMBEDDING_MODEL`
+- `SERAPH_EMBEDDING_API_KEY`
+
+Backward-compatible legacy alias:
+
+- `SERAPH_EMBEDDER` behaves the same as `SERAPH_EMBEDDING_BACKEND`
+
+The backend is selected with `SERAPH_EMBEDDING_BACKEND`:
 
 ```bash
-SERAPH_EMBEDDER=hashing PYTHONPATH="$PWD/rag" scripts/run.sh \
+SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
   --knowledge rag/tests/fixtures/minimal_knowledge.json \
   --workspace-dir /tmp/seraph-rag-smoke \
   --round 1
@@ -65,16 +78,26 @@ Supported values today:
 | Value | Status | Notes |
 |-------|--------|-------|
 | `hashing` | default, supported | 128-dimensional deterministic local vectors |
+| `openai_compatible` | supported | Calls an OpenAI-compatible `/embeddings` endpoint |
 
-The vector DB stores the backend name in Chroma collection metadata. If `SERAPH_EMBEDDER` changes between indexing and retrieval, SERAPH raises an embedding backend mismatch error. Rebuild `workspace/vectordb/` whenever changing embedding backends.
+Provider note:
+
+- `siliconflow` is accepted as an alias of `openai_compatible`.
+- `SERAPH_EMBEDDING_API_PATH` defaults to `/embeddings`.
+- `SERAPH_EMBEDDING_TIMEOUT_SECONDS` defaults to `180`.
+- `SERAPH_EMBEDDING_EXTRA_HEADERS` and `SERAPH_EMBEDDING_EXTRA_BODY` accept JSON objects for provider-specific overrides.
+- If SiliconFlow returns `401 Api key is invalid`, first check whether the copied key accidentally contains the same `sk-...` token twice. SERAPH now rejects this duplicated-token pattern early with a local configuration error.
+
+The vector DB stores the backend name in Chroma collection metadata. If `SERAPH_EMBEDDING_BACKEND` changes between indexing and retrieval, SERAPH raises an embedding backend mismatch error. Rebuild `workspace/vectordb/` whenever changing embedding backends.
 
 Trade-off:
 
 - The default hashing embedder is fast, deterministic, offline-friendly, and suitable for smoke tests and pipeline development.
 - Retrieval quality is weaker than a code-aware neural embedding model.
-- Future UniXcoder or other model-backed embedders should use the same embedding backend for both indexing and querying.
+- OpenAI-compatible embedding providers can improve semantic retrieval quality while keeping the same Phase 2 interface.
+- Any model-backed embedder must use the same backend for both indexing and querying.
 
-Important: do not call ChromaDB `query_texts` directly against SERAPH's current collections. The current prototype indexes with 128-dimensional hashing embeddings, while ChromaDB's default text embedding function may use a different dimensionality. Use `seraph_rag.retrieve` or `seraph_rag.cli retrieve`, which query with explicit matching embeddings.
+Important: do not call ChromaDB `query_texts` directly against SERAPH's current collections. The current prototype indexes with 128-dimensional hashing embeddings, while ChromaDB's default text embedding function may use a different dimensionality. Use `cargo run -p seraph-cli -- phase2 retrieve` or the `seraph_rag.retrieve` library helpers, which query with explicit matching embeddings.
 
 ## Smoke Test
 
@@ -96,15 +119,15 @@ Run the CLI on the minimal fixture:
 ```bash
 cd rag
 rm -rf /tmp/seraph_vectordb /tmp/seraph_graph.pkl /tmp/seraph_context.md
-python3 -m seraph_rag.cli index \
+cargo run -p seraph-cli -- phase2 index \
   --knowledge tests/fixtures/minimal_knowledge.json \
   --vectordb /tmp/seraph_vectordb
-python3 -m seraph_rag.cli graph \
+cargo run -p seraph-cli -- phase2 graph \
   --knowledge tests/fixtures/minimal_knowledge.json \
   --graph /tmp/seraph_graph.pkl
-python3 -m seraph_rag.cli targets \
+cargo run -p seraph-cli -- phase2 targets \
   --graph /tmp/seraph_graph.pkl
-python3 -m seraph_rag.cli retrieve \
+cargo run -p seraph-cli -- phase2 retrieve \
   --knowledge tests/fixtures/minimal_knowledge.json \
   --graph /tmp/seraph_graph.pkl \
   --vectordb /tmp/seraph_vectordb \
@@ -126,18 +149,18 @@ vectordb-ok
 After Phase 1 extraction creates `workspace/knowledge.json`:
 
 ```bash
-python3 -m seraph_rag.cli index \
+cargo run -p seraph-cli -- phase2 index \
   --knowledge workspace/knowledge.json \
   --vectordb workspace/vectordb
 
-python3 -m seraph_rag.cli graph \
+cargo run -p seraph-cli -- phase2 graph \
   --knowledge workspace/knowledge.json \
   --graph workspace/graph.pkl
 
-python3 -m seraph_rag.cli targets \
+cargo run -p seraph-cli -- phase2 targets \
   --graph workspace/graph.pkl
 
-python3 -m seraph_rag.cli retrieve \
+cargo run -p seraph-cli -- phase2 retrieve \
   --knowledge workspace/knowledge.json \
   --graph workspace/graph.pkl \
   --vectordb workspace/vectordb \
@@ -147,14 +170,25 @@ python3 -m seraph_rag.cli retrieve \
 
 `workspace/contexts/rag_target_001.md` is the input context for `harness-codegen`.
 
+Target selection behavior:
+
+- `--round 1` selects the top-ranked unsafe target, `--round 2` selects the next one, and so on.
+- `--target-api-id <api_id>` forces retrieval for a specific unsafe target when you want to retry or compare a particular API.
+
+Context layout behavior:
+
+- `## Required Setup APIs` contains producer/setup-chain APIs that are structurally needed to reach the target.
+- `## Related APIs` remains the broader exploratory neighborhood.
+- This split is intentional for deep targets such as decoder entrypoints, where setup APIs must stay visible even when the broader graph is noisy.
+
 The active Phase 3 skill contract is documented in `skills/harness-codegen/README.md`. It consumes the RAG markdown directly; it does not require `scenario.json`, `api_mapping.json`, or `api_plan.json`.
 
 ## Orchestration Script
 
-`scripts/run.sh` wraps the active Phase 2 path:
+`seraph-cli run` wraps the active Phase 2 path:
 
 ```bash
-PYTHONPATH="$PWD/rag" scripts/run.sh \
+cargo run -p seraph-cli -- run \
   --knowledge workspace/knowledge.json \
   --workspace-dir workspace \
   --round 1
@@ -163,7 +197,7 @@ PYTHONPATH="$PWD/rag" scripts/run.sh \
 To run Phase 1 extraction first:
 
 ```bash
-PYTHONPATH="$PWD/rag" scripts/run.sh \
+cargo run -p seraph-cli -- run \
   --manifest-path /path/to/target/Cargo.toml \
   --workspace-dir workspace \
   --round 1
@@ -172,7 +206,7 @@ PYTHONPATH="$PWD/rag" scripts/run.sh \
 To inspect commands without executing them:
 
 ```bash
-scripts/run.sh \
+cargo run -p seraph-cli -- run \
   --knowledge rag/tests/fixtures/minimal_knowledge.json \
   --workspace-dir /tmp/seraph-run-sh-test \
   --round 7 \

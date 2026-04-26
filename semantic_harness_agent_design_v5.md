@@ -1,6 +1,37 @@
 # SERAPH: SEmantic Rust Agent-driven Program Harness Synthesis
 
-> 面向 Rust 库的语义感知 Fuzz Harness 自动合成系统设计方案（v5.1 — RAG 驱动重构版）
+> 面向 Rust 库的语义感知 Fuzz Harness 自动合成系统设计方案（v5.2 — RAG 驱动重构版 / Phase 3 自动运行时诊断版）
+
+## 0. v5.2 修订清单
+
+本版在 v5.1 的 RAG 驱动重构基础上，对 **Phase 3 自动闭环** 做进一步统一。核心修订如下：
+
+1. **Phase 3 移除人工 review 活跃路径**
+   - `fix-acceptance` / `fix-acceptance-write` 不再属于活跃主流程。
+   - 主流程不再依赖人工 acceptance 结果推进 coverage。
+
+2. **Compile 修复保持自动、且最多两轮**
+   - LLM 生成的 harness 若编译失败，则将编译错误与必要上下文反馈给 LLM 修复。
+   - 最多修复 2 次；若仍失败，则丢弃该 harness，并记录 compile failure。
+
+3. **Smoke run 后新增运行时问题诊断**
+   - 只要 harness 编译通过，就必须执行 `smoke-run`。
+   - 若运行时报错，无论错误类型如何，都先交由 LLM 总结问题原因。
+   - 诊断结果单独写入 `runtime_error.json`，形成运行时错误知识库。
+
+4. **运行时问题先记录，不自动修复**
+   - panic、输入不合适、违反前置条件、其他运行时异常均只记录，不在当前版本自动修复。
+   - 若诊断为 ASan / sanitizer 类问题，则记录为 `bug`。
+
+5. **Coverage 口径调整**
+   - 只要 harness 编译成功并进入 `smoke-run`，即认为该 target 已被有效覆盖。
+   - smoke 失败不会阻止 coverage 生效，但运行时问题会被沉淀到 `runtime_error.json`。
+
+6. **运行时知识与 Phase 1 静态知识分离**
+   - 不修改 `knowledge.json`。
+   - 运行时经验单独维护于 `runtime_error.json`。
+
+---
 
 ## 0. v5.1 修订清单
 
@@ -78,6 +109,7 @@ LLM 的职责仅限于：
 - 阶段 2 中对 cluster 内 API 关系的推理
 - 生成 harness 代码
 - 修复编译错误
+- 总结运行时问题
 
 ### 2.2 单一职责阶段原则
 
@@ -89,7 +121,7 @@ LLM 的职责仅限于：
 4. Phase 3 - 检索：RAG 检索 unsafe 目标上下文
 5. Phase 3 - 生成：LLM 生成 harness（自主决定调用序列）
 6. Phase 3 - 修复：编译修复
-7. Phase 3 - 验证：smoke run + 覆盖率更新
+7. Phase 3 - 验证：smoke run + 运行时诊断 + 覆盖率更新
 
 ### 2.3 稳定 ID 原则
 
@@ -114,13 +146,14 @@ LLM 的职责仅限于：
 一个 API 只有在以下条件满足时才可计入覆盖：
 
 1. 它被某个已生成 harness 显式针对
-2. harness 成功编译并进入 smoke run
-3. 验证日志中出现该 API 的 `SERAPH_STEP_OK:<step_no>:<api_id>`
-4. 本次结果不是因为日志缺失而进入 `needs_review`
+2. 在当前最新一轮 Phase 3 产物中，至少有一个 harness 成功编译并进入 smoke run
+3. harness 仍必须遵守 `SERAPH_STEP_ENTER / SERAPH_STEP_OK` 标记协议，且编译检查会拒绝“只打印 marker 但不真正调用 target”的假覆盖
+4. smoke run 已实际执行该 harness；即使存在运行时错误，也应单独记录并计入 coverage
+5. 如果同一 target 之后又被重新执行，则 `coverage.json` 以最新一轮结果覆盖旧的 target 局部状态，而不是累积历史假阳性
 
 覆盖率口径为：
 
-> **covered = validated dynamic use**
+> **covered = latest validated target run**
 
 ---
 
@@ -142,9 +175,10 @@ flowchart TD
         RANK --> LOOP["循环: 对每个 unsafe 目标"]
         LOOP --> RAG["RAG 检索上下文<br/>(图邻居 + 向量相似 + Idiom)"]
         RAG --> LLM["LLM 生成 2-3 个 harness 变体"]
-        LLM --> FIX["compile-fixer"]
-        FIX --> SMOKE["smoke-run + validate"]
-        SMOKE --> COV{"覆盖率达标?"}
+        LLM --> FIX["compile-fixer (最多 2 次)"]
+        FIX --> SMOKE["smoke-run"]
+        SMOKE --> DIAG["runtime diagnose + runtime_error.json"]
+        DIAG --> COV{"覆盖率达标?"}
         COV -->|"No"| LOOP
         COV -->|"Yes"| OUT["最终 Harness 集合"]
     end
@@ -154,13 +188,13 @@ flowchart TD
 
 闭环是：
 
-`unsafe 目标选择 -> RAG 上下文检索 -> LLM 代码生成 -> 编译修复 -> 外部验证 -> 覆盖率状态`
+`unsafe 目标选择 -> RAG 上下文检索 -> LLM 代码生成 -> 编译修复 -> smoke-run -> 运行时诊断 -> 覆盖率状态`
 
 核心原则：
 
 - RAG 只负责检索相关 API 上下文
 - LLM 自主决定 API 调用序列和组合方式
-- 外部工具负责验证和推进状态
+- 外部工具负责编译修复、运行时诊断、验证和推进状态
 - 所有“是否继续”的判断均由外部编排决定
 
 ---
@@ -587,8 +621,10 @@ Phase 3 不再使用多 Stage 的 scenario→mapping→planning→codegen 管线
 | 目标选择 | `rag/retrieve.py` | `graph.pkl`、`coverage.json` | 排序后的 unsafe 目标列表 | 选择下一个 unsafe API 目标 |
 | 上下文检索 | `rag/retrieve.py` | 目标 API、ChromaDB、NetworkX 图 | 组装后的 LLM 上下文 | RAG 检索关联 API + Rust 惯用法 |
 | 代码生成 | `harness-codegen` | RAG 上下文 | `harness_RRR_SS.rs`（2-3 个变体） | LLM 自主决定调用序列并生成代码 |
-| 编译修复 | `compile-fixer` | harness、rustc 输出、相关签名 | 修复后的 harness | 修复编译错误 |
-| 验证 | `s3-coverage --validate` | smoke run 输出 | `coverage.json` 更新 | 外部验证与反馈 |
+| 编译修复 | `compile-fixer` | harness、rustc 输出、相关签名 | 修复后的 harness | 修复编译错误，最多 2 次 |
+| 运行验证 | `smoke-run` | 编译成功的 harness | 运行时报告 | 发现 panic / 参数问题 / sanitizer 问题 |
+| 运行时诊断 | `runtime-diagnose` | smoke 输出、harness、target 上下文 | `runtime_error.json` | 让 LLM 总结运行时问题，不自动修复 |
+| 覆盖率更新 | `s3-coverage --validate` | compile / smoke / runtime diagnosis 输出 | `coverage.json` 更新 | 外部验证与反馈 |
 
 ### 6.2 unsafe 目标排序
 
@@ -658,20 +694,23 @@ System Prompt:
 你是一个 Rust fuzz harness 专家。你的任务是为目标 unsafe API 生成多样化的测试 harness。
 
 规则：
-1. 目标 API 包含 unsafe 代码块，必须在 harness 中被调用
-2. 你需要决定如何组合"关联 API"来构造前置状态，使目标 API 被有意义地调用
-3. 对 Result 返回值使用 early return，不要 unwrap
-4. 生成 2-3 个不同的 harness 变体，每个变体用不同的方式到达 unsafe API
-5. 遵守"Rust 安全惯用法参考"中的约束
-6. 每个 ordered_step 在调用前输出 SERAPH_STEP_ENTER:<step_no>:<api_id>，
+1. 生成 AFL++ 友好的普通 Rust 二进制 harness，必须使用 `fn main()`
+2. fuzz 输入应来自 stdin 或可选的输入文件路径参数（兼容 AFL++ `@@`），并尽量只使用标准库读取输入
+3. 不要使用 `libfuzzer_sys`、`#![no_main]`、`fuzz_target!` 或 `afl::fuzz!`
+4. 目标 API 包含 unsafe 代码块，必须在 harness 中被调用
+5. 你需要决定如何组合"关联 API"来构造前置状态，使目标 API 被有意义地调用
+6. 对 Result 返回值使用 early return，不要 unwrap
+7. 生成 2-3 个不同的 harness 变体，每个变体用不同的方式到达 unsafe API
+8. 遵守"Rust 安全惯用法参考"中的约束
+9. 每个 ordered_step 在调用前输出 SERAPH_STEP_ENTER:<step_no>:<api_id>，
    成功返回后输出 SERAPH_STEP_OK:<step_no>:<api_id>
-7. 使用真实 crate import 名称，不得使用 target_lib
+10. 使用真实 crate import 名称，不得使用 target_lib
 
 User Prompt:
 {retrieve_context_for_target(target_api_id)}
 
 请为目标 API 生成 2-3 个 fuzz harness 变体。
-每个变体应使用不同的前置 API 组合路径到达 unsafe 目标。
+每个变体应使用不同的前置 API 组合路径到达 unsafe 目标，并保持 AFL++ 友好的普通二进制输入方式。
 ```
 
 ### 6.5 多样性策略
@@ -685,7 +724,7 @@ User Prompt:
 | 不同调用深度 | 第一轮只给直接邻居 API，第二轮给 2 跳邻居，增加调用链长度 |
 | 不同错误路径 | 提示 LLM 分别测试正常路径和错误/边界路径 |
 
-### 6.6 Compile-Fixer（不变）
+### 6.6 Compile-Fixer
 
 #### 输入
 
@@ -696,9 +735,9 @@ User Prompt:
 
 #### 修复策略
 
-- 第 1-2 轮：精确修复
-- 第 3-4 轮：局部结构调整
-- 第 5 轮：保留核心路径的降级修复
+- 最多 2 轮修复
+- 每一轮都将 rustc 报错、目标 API、失败 harness 以及必要上下文回喂给 LLM
+- 若第 2 轮后仍无法编译，则丢弃该 harness，并记录 compile failure
 
 #### 修复约束
 
@@ -706,7 +745,7 @@ User Prompt:
 2. 修复不能删除或打乱 `SERAPH_STEP_ENTER/OK` 轨迹标记
 3. 如果某个错误只能通过移除目标 unsafe API 才能修复，则本轮失败
 
-### 6.7 Smoke Run 与 Crash 分类（不变）
+### 6.7 Smoke Run 与运行时问题诊断
 
 Smoke run 使用：
 
@@ -714,14 +753,38 @@ Smoke run 使用：
 cargo +nightly fuzz run <target> -- -max_total_time=10
 ```
 
-#### 分类规则
+#### 运行规则
+
+1. 只要 harness 编译成功，就必须执行 `smoke-run`
+2. 如果 `smoke-run` 出现错误，无论是什么类型，都先让 LLM 总结这是什么问题
+3. 总结结果写入单独的 `runtime_error.json`
+4. 当前版本不对运行时问题进行自动修复
+5. 即使 `smoke-run` 报错，只要 harness 已编译成功并进入运行阶段，仍算已覆盖
+
+#### 运行时问题分类规则
 
 | 类别 | 判断依据 | 处理 |
 |------|----------|------|
-| `library_bug` | crash / sanitizer 指向目标库，且不是文档声明的预期 panic | 记入 `found_bugs`，对应 API 计入 `validated` |
-| `misuse` | crash 指向 harness 代码，或触发了文档声明的前置条件 panic | `misuse_fails += 1` |
-| `resource` | OOM / timeout | `misuse_fails += 1` |
-| `needs_review` | 归属模糊 | 放入 review 队列，不计入 validated |
+| `asan_bug` | sanitizer / ASan 指向目标库或可归因为真实内存安全错误 | 写入 `runtime_error.json`，记入 `found_bugs`，对应 API 计入 `validated` |
+| `panic_or_crash` | panic、崩溃、普通运行时异常 | 写入 `runtime_error.json`，对应 API 计入 `validated` |
+| `invalid_input_or_precondition` | fuzz 输入不合适、违反 API 前置条件、文档声明的 panic | 写入 `runtime_error.json`，对应 API 计入 `validated` |
+| `other_runtime_issue` | 其他暂未细分的问题 | 写入 `runtime_error.json`，对应 API 计入 `validated` |
+
+#### `runtime_error.json`
+
+运行时知识库单独维护，不写回 `knowledge.json`。建议包含：
+
+- `round`
+- `variant`
+- `attempt`
+- `target_api_id`
+- `harness`
+- `compile_report`
+- `smoke_report`
+- `classification`
+- `summary`
+- `evidence`
+- `bug`
 
 ---
 
@@ -741,8 +804,8 @@ v5 中每个 API 只维护以下三种主状态：
    - 无论编译失败、误用失败还是运行失败，状态都保留为 `attempted`
 
 3. `validated`
-   - smoke run 成功
-   - 或发现真实 `library_bug`
+   - 只要 harness 编译成功并进入 smoke run
+   - 即使 smoke run 报错，也只要被诊断并记录，仍视为 validated
 
 失败计数单独维护：
 
@@ -752,9 +815,9 @@ v5 中每个 API 只维护以下三种主状态：
 ### 7.2 状态转移
 
 ```text
-Stage 1.5 完成映射           -> targeted
+目标被选中并进入本轮检索       -> targeted
 进入 build / fix / smoke 流程 -> attempted
-smoke 成功或真实库 bug        -> validated
+任一 harness 编译成功并进入 smoke -> validated
 ```
 
 #### 动态命中证明与失败归因
@@ -766,18 +829,24 @@ smoke 成功或真实库 bug        -> validated
 
 `s3-coverage --validate` 按以下规则处理：
 
-1. 出现 `STEP_OK` 的 API，说明该 API 已被动态执行且成功返回，可升级为 `validated`
-2. 若分类为 `library_bug`，则最后一个 `STEP_ENTER` 且没有对应 `STEP_OK` 的活动 API 也记为 `validated`，并关联到 `found_bugs`
-3. 若分类为 `misuse` / `resource`，则只给当前活动 API 增加 `misuse_fails`；此前已经 `STEP_OK` 的 API 不回退
-4. `mark-compile-fail` 无法细分到单步时，对该 harness 中尚未 `validated` 的 API 统一增加 `compile_fails`
+1. 任一 harness 编译成功且进入 `smoke-run`，目标 API 即可升级为 `validated`
+2. 若运行时诊断分类为 `asan_bug`，则对应 target 也进入 `found_bugs`
+3. 非 ASan 的运行时问题只写入 `runtime_error.json`，不阻止 `validated`
+4. 若编译失败且两轮修复后仍失败，则对该 harness 对应目标增加 `compile_fails`
+5. 若同一 target 被 rerun，则旧的 target-level `validated / attempted / found_bugs / needs_review / harnesses` 会被清理，再按本轮 compile / fix / smoke / runtime 结果重建
 
 ### 7.3 覆盖率计算
 
 ```text
 covered_api_ids   = { api | status == validated }
-exhausted_api_ids = { api | compile_fails >= 3 or misuse_fails >= 5 }
+exhausted_api_ids = { api | compile_fails >= 2 and no compile-successful harness }
 uncovered_api_ids = total_api_ids - covered_api_ids - exhausted_api_ids
 coverage_rate     = |covered_api_ids| / |total_api_ids|
+
+related_total_api_ids    = ⋃ related_api_ids_by_target[target]
+related_covered_api_ids  = { related api | 某个 validated harness 对其存在静态 call-shaped use }
+related_uncovered_api_ids = related_total_api_ids - related_covered_api_ids
+related_coverage_rate    = |related_covered_api_ids| / |related_total_api_ids|
 ```
 
 ### 7.4 权威格式：`coverage.json`
@@ -797,23 +866,31 @@ coverage_rate     = |covered_api_ids| / |total_api_ids|
   },
   "failed_attempts": {
     "fn_015": {
-      "compile_fails": 0,
-      "misuse_fails": 2,
-      "last_reason": "documented panic triggered by invalid path"
+      "compile_fails": 1,
+      "misuse_fails": 0,
+      "last_reason": "rustc type mismatch while constructing target preconditions"
     }
   },
   "covered_api_ids": ["fn_003"],
   "exhausted_api_ids": [],
   "uncovered_api_ids": ["fn_001", "fn_002", "fn_015", "fn_016", "fn_020"],
+  "related_total_api_ids": ["fn_015", "fn_016"],
+  "related_api_ids_by_target": {
+    "fn_003": ["fn_015", "fn_016"]
+  },
+  "related_covered_api_ids": ["fn_015"],
+  "related_uncovered_api_ids": ["fn_016"],
   "harnesses": {
-    "harness_003_01": {
+    "3:1": {
       "round": 3,
       "sub_index": 1,
-      "scenario_id": "scn_003",
-      "mapping_id": "map_003_01",
-      "plan_id": "plan_003_01",
+      "target_api_id": "fn_003",
       "api_ids": ["fn_003", "fn_015", "fn_016"],
-      "status": "attempted"
+      "status": "validated",
+      "runtime_status": "runtime_error",
+      "runtime_classification": "invalid_input_or_precondition",
+      "runtime_error_report_path": "workspace/reports/runtime_error_003_01.json",
+      "runtime_error_summary": "Harness reached the target but panicked because the generated path violated a documented precondition."
     }
   },
   "found_bugs": [],
@@ -821,7 +898,8 @@ coverage_rate     = |covered_api_ids| / |total_api_ids|
   "next_priority": [
     {"api_id": "fn_015", "reason": "高风险查询路径，尚未验证"}
   ],
-  "coverage_rate": 0.17
+  "coverage_rate": 0.17,
+  "related_coverage_rate": 0.50
 }
 ```
 
@@ -844,6 +922,9 @@ coverage_rate     = |covered_api_ids| / |total_api_ids|
 - Phase 3：外部 shell 编排 + OpenHarness 单轮 Skill 调用
 - 验证：`cargo fuzz`
 - 覆盖率管理：Rust CLI（`s3-coverage`）
+- 配置边界：
+  - Phase 2 / RAG 只读取嵌入模型配置（如 `SERAPH_EMBEDDING_BACKEND`、`SERAPH_EMBEDDING_MODEL`）
+  - Phase 3 / 生成、修复、运行时诊断只读取 LLM 配置（如 `SERAPH_LLM_BASE_URL`、`SERAPH_LLM_API_KEY`、`SERAPH_LLM_MODEL`）
 
 混合技术栈，以开发方便为目标，复用现有工具包。
 
@@ -1079,7 +1160,7 @@ RAG 方案通过向量化 + 语义图，将知识以可检索的形式存储，�
 | 挑战 | 风险 | 应对 |
 |------|------|------|
 | 大型 crate API 数量过多 | 向量检索噪声 | DBSCAN 聚类 + 图子图提取，只给 LLM 关联 API |
-| crash 归属不清 | 误判真实 bug | `needs_review` 队列 + Sanitizer + debug info |
+| 运行时问题归因不稳定 | 错误分类不一致 | 结构化 runtime diagnosis JSON + 证据裁剪 + ASan 单独归类 |
 | 泛型 API 难以实例化 | codegen 漂移 | CTS A/B/C/D 策略 + Rust Idiom 索引 |
 | 嵌入模型对 Rust 代码不敏感 | 聚类质量差 | 可在 Rust 代码语料上 benchmark，必要时微调 |
 | DBSCAN 超参数敏感 | 聚类过粗或过细 | 用真实 crate 做回归调参 |
@@ -1129,4 +1210,3 @@ v5.1 的核心贡献是将 RAG 引入 Rust 库 fuzz harness 合成，形成**以
 SERAPH 的定位可以准确表述为：
 
 > 一个以 RAG 为语义知识引擎、以 unsafe API 为核心测试目标、由外部确定性编排驱动、使用 LLM 生成 fuzz harness 并由真实工具链验证的 Rust 库测试合成系统。
-

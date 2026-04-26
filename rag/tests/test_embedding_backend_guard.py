@@ -14,10 +14,10 @@ def test_retrieve_rejects_mismatched_embedder_backend(tmp_path, monkeypatch):
     vectordb = tmp_path / "vectordb"
     graph_path = tmp_path / "graph.pkl"
     knowledge = load_knowledge(FIXTURE)
-    monkeypatch.setenv("SERAPH_EMBEDDER", "hashing")
+    monkeypatch.setenv("SERAPH_EMBEDDING_BACKEND", "hashing")
     index_knowledge(knowledge, vectordb)
     write_graph(build_graph(knowledge), graph_path)
 
-    monkeypatch.setenv("SERAPH_EMBEDDER", "future-model")
+    monkeypatch.setenv("SERAPH_EMBEDDING_BACKEND", "future-model")
     with pytest.raises(ValueError, match="embedding backend mismatch"):
         render_context_from_stores(knowledge, vectordb, graph_path)

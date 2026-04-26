@@ -1,16 +1,11 @@
 use seraph_types::{
-    ApiCoverageStatus, ApiId, ApiInfo, ApiKind,
-    BorrowedReturnFact,
-    CodeRef, CoverageState, CrateMeta,
-    DocSections, EnumVariantInfo, ExampleAnchor, ExampleId, ExampleInfo,
-    ExplicitPanicSiteFact, ExternAbiApiFact, FailedAttempt,
-    Knowledge,
-    ModuleId, ModuleInfo, NextPriorityItem, ReprKind, ReturnShape, ReturnShapeKind, RiskFacts,
-    RiskOwner, ScenarioArtifact, ScenarioType,
-    SymbolId, SymbolInfo, SymbolKind, TraitAssociatedConstBinding, TraitAssociatedConstDef,
-    TraitAssociatedTypeBinding, TraitAssociatedTypeDef, TraitExposureKind, TraitId, TraitImplId,
-    TraitImplInfo, TraitInfo, TraitOrigin,
-    TypeId, TypeInfo, TypeKind,
+    ApiCoverageStatus, ApiId, ApiInfo, ApiKind, BorrowedReturnFact, CodeRef, CoverageState,
+    CrateMeta, DocSections, EnumVariantInfo, ExampleAnchor, ExampleId, ExampleInfo,
+    ExplicitPanicSiteFact, ExternAbiApiFact, FailedAttempt, HarnessRecord, Knowledge, ModuleId,
+    ModuleInfo, NextPriorityItem, ReprKind, ReturnShape, ReturnShapeKind, RiskFacts, RiskOwner,
+    ScenarioArtifact, ScenarioType, SymbolId, SymbolInfo, SymbolKind, TraitAssociatedConstBinding,
+    TraitAssociatedConstDef, TraitAssociatedTypeBinding, TraitAssociatedTypeDef, TraitExposureKind,
+    TraitId, TraitImplId, TraitImplInfo, TraitInfo, TraitOrigin, TypeId, TypeInfo, TypeKind,
     TypeLayoutFact, VariantKind,
 };
 use std::collections::BTreeMap;
@@ -493,6 +488,13 @@ fn coverage_state_roundtrip_keeps_api_id_map_keys() {
         covered_api_ids: vec![ApiId::from("fn_003")],
         exhausted_api_ids: vec![],
         uncovered_api_ids: vec![ApiId::from("fn_015")],
+        related_total_api_ids: vec![ApiId::from("fn_101"), ApiId::from("fn_102")],
+        related_api_ids_by_target: BTreeMap::from([(
+            ApiId::from("fn_003"),
+            vec![ApiId::from("fn_101"), ApiId::from("fn_102")],
+        )]),
+        related_covered_api_ids: vec![ApiId::from("fn_101")],
+        related_uncovered_api_ids: vec![ApiId::from("fn_102")],
         harnesses: BTreeMap::new(),
         found_bugs: vec![],
         needs_review: vec![],
@@ -501,6 +503,7 @@ fn coverage_state_roundtrip_keeps_api_id_map_keys() {
             reason: "not validated".into(),
         }],
         coverage_rate: 0.5,
+        related_coverage_rate: 0.5,
     };
 
     let json = serde_json::to_string(&coverage).unwrap();
@@ -511,4 +514,66 @@ fn coverage_state_roundtrip_keeps_api_id_map_keys() {
         Some(&ApiCoverageStatus::Validated)
     );
     assert_eq!(decoded.next_priority[0].api_id.as_str(), "fn_015");
+    assert_eq!(decoded.related_total_api_ids.len(), 2);
+    assert_eq!(
+        decoded
+            .related_api_ids_by_target
+            .get(&ApiId::from("fn_003"))
+            .expect("target related ids")
+            .len(),
+        2
+    );
+    assert_eq!(decoded.related_covered_api_ids[0].as_str(), "fn_101");
+    assert_eq!(decoded.related_uncovered_api_ids[0].as_str(), "fn_102");
+}
+
+#[test]
+fn harness_record_roundtrip_supports_phase3_fields_and_legacy_ids() {
+    let record = HarnessRecord {
+        round: 7,
+        sub_index: 2,
+        attempt: Some(3),
+        target_api_id: Some(ApiId::from("fn_unsafe")),
+        api_ids: vec![ApiId::from("fn_unsafe")],
+        status: ApiCoverageStatus::Validated,
+        harness_path: Some("workspace/fuzz/harness_007_02_fixed_03.rs".into()),
+        compile_report_path: Some("workspace/reports/compile_007_02_fixed_03.json".into()),
+        smoke_report_path: Some("workspace/reports/smoke_007_02_fixed_03.json".into()),
+        runtime_status: Some("bug".into()),
+        runtime_classification: Some("panic_detected".into()),
+        runtime_error_report_path: Some(
+            "workspace/reports/runtime_error_007_02_fixed_03.json".into(),
+        ),
+        runtime_error_summary: Some("panic after target".into()),
+        review_status: Some("accepted".into()),
+        review_reason: Some("smoke_ok".into()),
+        review_report_path: Some("workspace/reports/fix_acceptance_007_index.json".into()),
+        scenario_id: Some("scn_001".into()),
+        mapping_id: Some("map_001".into()),
+        plan_id: Some("plan_001".into()),
+    };
+
+    let json = serde_json::to_string(&record).unwrap();
+    let decoded: HarnessRecord = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(decoded.attempt, Some(3));
+    assert_eq!(
+        decoded.target_api_id.as_ref().map(|value| value.as_str()),
+        Some("fn_unsafe")
+    );
+    assert_eq!(decoded.api_ids[0].as_str(), "fn_unsafe");
+    assert_eq!(decoded.runtime_status.as_deref(), Some("bug"));
+    assert_eq!(
+        decoded.runtime_error_report_path.as_deref(),
+        Some("workspace/reports/runtime_error_007_02_fixed_03.json")
+    );
+    assert_eq!(
+        decoded.runtime_error_summary.as_deref(),
+        Some("panic after target")
+    );
+    assert_eq!(decoded.review_status.as_deref(), Some("accepted"));
+    assert_eq!(
+        decoded.plan_id.as_ref().map(|value| value.as_str()),
+        Some("plan_001")
+    );
 }

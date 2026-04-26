@@ -49,7 +49,7 @@ knowledge.json
 - `rag/seraph_rag/idioms.py`: builds or loads cross-crate Rust idiom documents.
 - `rag/seraph_rag/graph_builder.py`: constructs `workspace/graph.pkl` using NetworkX.
 - `rag/seraph_rag/retrieve.py`: ranks unsafe targets and assembles Phase 3 context markdown/JSON.
-- `rag/seraph_rag/cli.py`: exposes `index`, `graph`, `retrieve`, and `targets` commands.
+- `rag/seraph_rag/cli.py`: internal Python implementation entrypoint used by `seraph-cli`.
 
 ### Tests and fixtures
 
@@ -177,20 +177,20 @@ Unsafe API nodes must include:
 The RAG package should expose these commands:
 
 ```bash
-python -m seraph_rag.cli index \
+cargo run -p seraph-cli -- phase2 index \
   --knowledge workspace/knowledge.json \
   --vectordb workspace/vectordb
 
-python -m seraph_rag.cli graph \
+cargo run -p seraph-cli -- phase2 graph \
   --knowledge workspace/knowledge.json \
   --vectordb workspace/vectordb \
   --graph workspace/graph.pkl
 
-python -m seraph_rag.cli targets \
+cargo run -p seraph-cli -- phase2 targets \
   --graph workspace/graph.pkl \
   --coverage workspace/coverage.json
 
-python -m seraph_rag.cli retrieve \
+cargo run -p seraph-cli -- phase2 retrieve \
   --knowledge workspace/knowledge.json \
   --vectordb workspace/vectordb \
   --graph workspace/graph.pkl \
@@ -205,9 +205,9 @@ The new main path is:
 
 ```bash
 s3-extract --manifest-path <target>/Cargo.toml --output workspace/knowledge.json
-python -m seraph_rag.cli index --knowledge workspace/knowledge.json --vectordb workspace/vectordb
-python -m seraph_rag.cli graph --knowledge workspace/knowledge.json --vectordb workspace/vectordb --graph workspace/graph.pkl
-python -m seraph_rag.cli retrieve --knowledge workspace/knowledge.json --vectordb workspace/vectordb --graph workspace/graph.pkl --coverage workspace/coverage.json --round 1 --output workspace/contexts/rag_target_001.md
+cargo run -p seraph-cli -- phase2 index --knowledge workspace/knowledge.json --vectordb workspace/vectordb
+cargo run -p seraph-cli -- phase2 graph --knowledge workspace/knowledge.json --vectordb workspace/vectordb --graph workspace/graph.pkl
+cargo run -p seraph-cli -- phase2 retrieve --knowledge workspace/knowledge.json --vectordb workspace/vectordb --graph workspace/graph.pkl --coverage workspace/coverage.json --round 1 --output workspace/contexts/rag_target_001.md
 oh run --skill harness-codegen --context workspace/contexts/rag_target_001.md --output-dir workspace/fuzz/fuzz_targets
 ```
 

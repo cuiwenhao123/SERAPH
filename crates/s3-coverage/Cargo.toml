@@ -5,3 +5,7 @@ edition.workspace = true
 license.workspace = true
 publish = false
 description = "Coverage state machine and stop-policy management for SERAPH."
+
+[dependencies]
+serde_json.workspace = true
+seraph-types = { path = "../seraph-types" }

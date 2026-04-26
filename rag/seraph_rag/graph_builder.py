@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pickle
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any, Dict, Iterable, Optional, Union
 
 import networkx as nx
 
@@ -17,6 +17,7 @@ def build_graph(knowledge: Dict[str, Any]) -> nx.DiGraph:
     unsafe_api_ids = _string_ids(risk_facts.get("unsafe_functions", []))
     ffi_api_ids = _string_ids(risk_facts.get("ffi_functions", []))
     panic_api_ids = _string_ids(risk_facts.get("panic_sites", []))
+    type_lookup = _build_type_lookup(knowledge)
 
     for module in knowledge.get("modules", []):
         module_id = module["module_id"]
@@ -31,6 +32,7 @@ def build_graph(knowledge: Dict[str, Any]) -> nx.DiGraph:
         graph.add_node(
             type_id,
             kind="type",
+            name=type_info.get("name", ""),
             path=type_info.get("canonical_path", type_id),
         )
         module_id = type_info.get("public_anchor_module_id")
@@ -46,6 +48,17 @@ def build_graph(knowledge: Dict[str, Any]) -> nx.DiGraph:
             is_unsafe=bool(trait.get("is_unsafe")),
         )
 
+    for impl_info in knowledge.get("trait_impl_registry", []):
+        trait_id = impl_info.get("trait_id")
+        if not trait_id or graph.has_node(trait_id):
+            continue
+        graph.add_node(
+            trait_id,
+            kind="trait",
+            path=impl_info.get("trait_canonical_path", trait_id),
+            is_unsafe=bool(impl_info.get("is_unsafe")),
+        )
+
     for api in knowledge.get("apis", []):
         api_id = api["api_id"]
         has_unsafe = (
@@ -56,8 +69,12 @@ def build_graph(knowledge: Dict[str, Any]) -> nx.DiGraph:
         graph.add_node(
             api_id,
             kind="api",
+            name=api.get("name", ""),
             path=api.get("canonical_path", api_id),
             signature=api.get("signature") or api.get("signature_text", ""),
+            api_kind=api.get("api_kind", ""),
+            owner_type_id=api.get("owner_type_id"),
+            receiver=api.get("receiver", ""),
             has_unsafe=has_unsafe,
             has_ffi=api_id in ffi_api_ids,
             has_panic_points=api_id in panic_api_ids,
@@ -86,6 +103,10 @@ def build_graph(knowledge: Dict[str, Any]) -> nx.DiGraph:
         trait_id = impl_info.get("trait_id")
         if type_id and trait_id and graph.has_node(type_id) and graph.has_node(trait_id):
             graph.add_edge(type_id, trait_id, kind="impl_connects_type_trait")
+            if _trait_is_deref(graph, trait_id, impl_info):
+                for target_type_id in _resolve_deref_target_type_ids(impl_info, type_lookup):
+                    if graph.has_node(target_type_id):
+                        graph.add_edge(type_id, target_type_id, kind="type_deref_target")
 
     for node_id, data in list(graph.nodes(data=True)):
         if data.get("kind") == "api" and data.get("has_unsafe"):
@@ -150,6 +171,66 @@ def _type_text_mentions(type_text: str, name: str) -> bool:
         .replace(")", " ")
     )
     return name in normalized.split()
+
+
+def _build_type_lookup(knowledge: Dict[str, Any]) -> Dict[str, str]:
+    lookup = {}
+    for type_info in knowledge.get("types", []):
+        type_id = type_info["type_id"]
+        for key in (
+            type_id,
+            type_info.get("canonical_path"),
+            type_info.get("name"),
+        ):
+            if key:
+                lookup.setdefault(str(key), type_id)
+    return lookup
+
+
+def _trait_is_deref(graph: nx.DiGraph, trait_id: str, impl_info: Dict[str, Any]) -> bool:
+    trait_name = str(impl_info.get("trait_name", "")).lower()
+    trait_path = str(graph.nodes[trait_id].get("path", "")).lower()
+    return trait_name == "deref" or trait_path.endswith("::deref")
+
+
+def _resolve_deref_target_type_ids(
+    impl_info: Dict[str, Any],
+    type_lookup: Dict[str, str],
+) -> Iterable[str]:
+    resolved = []
+    for binding in impl_info.get("associated_type_bindings", []) or []:
+        if str(binding.get("name", "")) != "Target":
+            continue
+        target_type_id = _resolve_type_id_from_binding(binding, type_lookup)
+        if target_type_id:
+            resolved.append(target_type_id)
+    return resolved
+
+
+def _resolve_type_id_from_binding(
+    binding: Dict[str, Any],
+    type_lookup: Dict[str, str],
+) -> Optional[str]:
+    for key in (
+        "assigned_type_id",
+        "type_id",
+        "assigned_canonical_path",
+        "assigned_type",
+    ):
+        value = binding.get(key)
+        if not value:
+            continue
+        exact = type_lookup.get(str(value))
+        if exact:
+            return exact
+        suffix_matches = [
+            type_id
+            for candidate, type_id in type_lookup.items()
+            if "::" in candidate and candidate.endswith("::{}".format(value))
+        ]
+        if len(set(suffix_matches)) == 1:
+            return suffix_matches[0]
+    return None
 
 
 def write_graph(graph: nx.Graph, path: Union[str, Path]) -> None:

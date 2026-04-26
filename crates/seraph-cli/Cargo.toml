@@ -5,3 +5,7 @@ edition.workspace = true
 license.workspace = true
 publish = false
 description = "Future unified CLI entrypoint for SERAPH."
+
+[dependencies]
+s3-coverage = { path = "../s3-coverage" }
+serde_json.workspace = true

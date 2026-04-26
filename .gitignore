@@ -33,6 +33,8 @@ smoke_err.log
 /workspace/api_mapping.json
 /workspace/contexts/*
 !/workspace/contexts/.gitkeep
+/workspace/prompts/*
+!/workspace/prompts/.gitkeep
 /workspace/plans/*
 !/workspace/plans/.gitkeep
 /workspace/sub_mappings/*
@@ -43,6 +45,8 @@ smoke_err.log
 !/workspace/cache/.gitkeep
 /workspace/reports/*
 !/workspace/reports/.gitkeep
+/workspace/fixes/*
+!/workspace/fixes/.gitkeep
 /workspace/fuzz/*
 !/workspace/fuzz/.gitkeep
 !/workspace/README.md

@@ -1,6 +1,6 @@
 # harness-codegen
 
-`harness-codegen` is the Phase 3 generation skill for the SERAPH v5.1 active path. It consumes a RAG context markdown file produced by `seraph_rag.cli retrieve` and emits Rust fuzz harness source files.
+`harness-codegen` is the Phase 3 generation skill for the SERAPH v5.1 active path. It consumes a RAG context markdown file produced by `seraph-cli phase2 retrieve` and emits Rust fuzz harness source files.
 
 ## RAG Context Input
 
