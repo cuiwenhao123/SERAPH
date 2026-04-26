@@ -911,11 +911,16 @@ def _collect_variant_opportunities(
         for arg_type in _target_argument_types(target_api)
     ]
 
+    target_owner_type_id = target_api.get("owner_type_id")
     state_choices = [
-        "related mutator available before target: {}".format(_api_display_path(api))
+        "same-owner mutator surfaced in related APIs: {}".format(_api_display_path(api))
         for api in related_apis
         if api.get("receiver") in {"&mut Self", "&mut self"}
+        and target_owner_type_id
+        and api.get("owner_type_id") == target_owner_type_id
     ]
+    if not state_choices:
+        state_choices = ["no same-owner mutator surfaced in related APIs"]
 
     boundary_choices: List[str] = []
     doc_sections = target_api.get("doc_sections") or {}

@@ -53,8 +53,9 @@ def test_render_context_markdown_surfaces_variant_opportunities():
     assert "### Boundary Choices" in markdown
     assert "- setup API fixture_crate::Buffer::new produces fixture_crate::Buffer" in variant_section
     assert "- target signature includes argument type usize" in variant_section
-    assert "- related mutator available before target: fixture_crate::Buffer::push" in variant_section
+    assert "- same-owner mutator surfaced in related APIs: fixture_crate::Buffer::push" in variant_section
     assert "- documented safety precondition: The index must be in bounds." in variant_section
+    assert "before target" not in variant_section
     assert "call the target immediately" not in variant_section
     assert "prefer documented recoverable boundaries" not in variant_section
 

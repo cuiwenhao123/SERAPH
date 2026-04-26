@@ -19,19 +19,26 @@ def test_render_context_from_stores_dedupes_target_and_honors_budget(tmp_path):
         knowledge,
         vectordb,
         graph_path,
-        max_context_chars=1200,
+        max_context_chars=1025,
     )
 
     variant_section = markdown.split("## Variant Opportunities", 1)[1].split(
         "## Similar API Usage", 1
     )[0]
+    related_section = markdown.split("## Related APIs", 1)[1].split(
+        "## Variant Opportunities", 1
+    )[0]
+    compile_section = markdown.split("## Compile-Time Facts", 1)[1].split(
+        "## Related APIs", 1
+    )[0]
     similar_section = markdown.split("## Similar API Usage", 1)[1].split(
         "## Rust Idioms", 1
     )[0]
-    assert "### State Progression Choices" in variant_section
-    assert "- setup API fixture_crate::Buffer::new produces fixture_crate::Buffer" in variant_section
-    assert "- target signature includes argument type usize" in variant_section
-    assert "- documented safety precondition: The index must be in bounds." in variant_section
+    assert "- [Section truncated to fit budget]" in variant_section
+    assert "- [Section truncated to fit budget]" in similar_section
+    assert "- [Section truncated to fit budget]" in markdown.split("## Rust Idioms", 1)[1]
+    assert "- [Section truncated to fit budget]" not in related_section
+    assert "- [Section truncated to fit budget]" not in compile_section
     assert "fixture_crate::Buffer::get_unchecked" not in similar_section
-    assert len(markdown) <= 1200
+    assert len(markdown) <= 1025
     assert "## Generation Rules" not in markdown
