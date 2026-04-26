@@ -46,8 +46,8 @@ The retrieved markdown context is organized around:
 - `Crate Facts`
 - `Target API`
 - `Known Reachable Paths`
-- `Related APIs`
 - `Compile-Time Facts`
+- `Related APIs`
 - `Variant Opportunities`
 - `Similar API Usage`
 - `Rust Idioms`
