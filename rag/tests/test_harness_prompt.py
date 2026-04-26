@@ -29,12 +29,19 @@ def test_build_prompt_bundle_uses_fact_grounded_prompt_contract():
 
     bundle = build_prompt_bundle(context, variants=2)
 
-    assert "SERAPH's Rust fuzz harness generation expert" in bundle["system_prompt"]
-    assert "`Known Reachable Paths` are validated, fact-grounded examples" in bundle["system_prompt"]
+    assert bundle["system_prompt"].startswith("You are SERAPH's Rust fuzz harness generation expert.")
+    assert (
+        "`Known Reachable Paths` are validated, fact-grounded examples of how the target can be reached. "
+        "They are strong hints, not the only allowed sequence."
+        in bundle["system_prompt"]
+    )
     assert "`Related APIs` are the main building blocks" in bundle["system_prompt"]
     assert "You may design your own setup and call sequence using the facts in the context." in bundle["user_prompt"]
     assert "Prefer `Related APIs` as the main construction pool." in bundle["user_prompt"]
-    assert "Use `Known Reachable Paths` as validated anchors when helpful" in bundle["user_prompt"]
+    assert (
+        "Use `Known Reachable Paths` as validated anchors when helpful, but do not copy them mechanically."
+        in bundle["user_prompt"]
+    )
 
 
 def test_prompt_bundle_is_json_serializable():
