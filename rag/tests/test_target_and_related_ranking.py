@@ -384,6 +384,7 @@ def test_render_context_markdown_surfaces_known_reachable_paths_by_default():
     assert "InputCodecParameters::new_decoder" in reachable
     assert "InputStream::codecpar" in reachable
     assert "InputFormatContext::read_frame" in reachable
+    assert reachable.index("InputStream::codecpar") < reachable.index("InputCodecParameters::new_decoder")
 
 
 def deref_setup_knowledge():

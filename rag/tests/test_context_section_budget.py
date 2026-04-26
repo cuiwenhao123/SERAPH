@@ -24,11 +24,12 @@ def test_context_budget_preserves_all_core_sections(tmp_path):
 
     assert len(markdown) <= 1800
     for section in [
+        "## Crate Facts",
         "## Target API",
+        "## Known Reachable Paths",
         "## Related APIs",
-        "## Semantically Similar API Docs",
+        "## Similar API Usage",
         "## Rust Idioms",
-        "## Generation Rules",
     ]:
         assert section in markdown
-    assert "SERAPH_STEP_OK" in markdown
+    assert "## Generation Rules" not in markdown

@@ -207,7 +207,10 @@ fn extract_context_api_set(context: &str) -> Result<ContextApiSet, String> {
             }
             continue;
         }
-        if section != "Required Setup APIs" && section != "Related APIs" {
+        if section != "Required Setup APIs"
+            && section != "Known Reachable Paths"
+            && section != "Related APIs"
+        {
             continue;
         }
         let Some(rest) = trimmed.strip_prefix("- ") else {

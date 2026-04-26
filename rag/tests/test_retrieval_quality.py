@@ -22,10 +22,9 @@ def test_render_context_from_stores_dedupes_target_and_honors_budget(tmp_path):
         max_context_chars=900,
     )
 
-    similar_section = markdown.split("## Semantically Similar API Docs", 1)[1].split(
+    similar_section = markdown.split("## Similar API Usage", 1)[1].split(
         "## Rust Idioms", 1
     )[0]
     assert "fixture_crate::Buffer::get_unchecked" not in similar_section
     assert len(markdown) <= 900
-    assert "## Generation Rules" in markdown
-    assert "SERAPH_STEP_OK" in markdown
+    assert "## Generation Rules" not in markdown

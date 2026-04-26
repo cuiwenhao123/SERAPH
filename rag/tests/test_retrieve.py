@@ -156,18 +156,25 @@ def test_render_context_markdown_surfaces_compile_critical_import_trait_and_enum
 
     markdown = render_context_markdown(knowledge, graph, target)
 
-    assert "## Exact Import Paths" in markdown
-    assert "fixture::avutil::Dictionary" in markdown
-    assert "fixture::io::IoContext" in markdown
-    assert "fixture::io::Whence" in markdown
-    assert "## Required Traits" in markdown
-    assert "required_methods=buf_len" in markdown
-    assert "provided_methods=read, seek" in markdown
-    assert "## Trait Method Signatures" in markdown
-    assert "fixture::io::IoContext::buf_len: fn buf_len(&self) -> usize [required]" in markdown
-    assert "fixture::io::IoContext::seek: fn seek(&mut self, i64, Whence, bool) -> Result<u64, Error> [provided]" in markdown
-    assert "## Enum Variants" in markdown
-    assert "fixture::io::Whence: Size | Set | Cur | End" in markdown
+    compile_facts = markdown.split("## Compile-Time Facts", 1)[1].split("## Related APIs", 1)[0]
+    compile_fact_lines = compile_facts.splitlines()
+
+    assert "### Exact Import Paths" in compile_facts
+    assert "### Required Traits" in compile_facts
+    assert "### Trait Method Signatures" in compile_facts
+    assert "### Enum Variants" in compile_facts
+    assert "## Exact Import Paths" not in compile_fact_lines
+    assert "## Required Traits" not in compile_fact_lines
+    assert "## Trait Method Signatures" not in compile_fact_lines
+    assert "## Enum Variants" not in compile_fact_lines
+    assert "fixture::avutil::Dictionary" in compile_facts
+    assert "fixture::io::IoContext" in compile_facts
+    assert "fixture::io::Whence" in compile_facts
+    assert "required_methods=buf_len" in compile_facts
+    assert "provided_methods=read, seek" in compile_facts
+    assert "fixture::io::IoContext::buf_len: fn buf_len(&self) -> usize [required]" in compile_facts
+    assert "fixture::io::IoContext::seek: fn seek(&mut self, i64, Whence, bool) -> Result<u64, Error> [provided]" in compile_facts
+    assert "fixture::io::Whence: Size | Set | Cur | End" in compile_facts
 
 
 def test_render_context_markdown_trait_target_surfaces_implementor_setup():
