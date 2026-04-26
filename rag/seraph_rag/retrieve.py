@@ -212,20 +212,34 @@ def _render_context_markdown_unbudgeted(
         max_related_apis=max_related_apis,
     )
     lines = [
-        "# SERAPH RAG Harness Context",
+        "# SERAPH Rust Harness Context",
+        "",
+        "## Crate Facts",
+        "- crate_name: {}".format(knowledge["crate_meta"].get("crate_name", crate_import_name)),
+        "- crate_import_name: {}".format(crate_import_name),
+        "- target_crate_kind: library",
         "",
         "## Target API",
         "- api_id: {}".format(target.api_id),
         "- path: {}".format(_api_display_path(target_api)),
         "- signature: {}".format(_api_signature_display(target_api)),
-        "- safety: {}".format((target_api.get("doc_sections") or {}).get("safety", "")),
+        "- target_kind: {}".format(target_api.get("api_kind", "")),
+        "- owner_type: {}".format(_type_display_name(type_index.get(target_api.get("owner_type_id")), "")),
+        "- owner_trait: {}".format(
+            _trait_display_name(trait_index.get(target_api.get("owner_trait_id")), graph, "")
+        ),
+        "- receiver: {}".format(target_api.get("receiver", "")),
+        "- return_shape: {}".format(target_api.get("return_type", "")),
+        "- safety_summary: {}".format((target_api.get("doc_sections") or {}).get("safety", "")),
+        "- errors_summary: {}".format((target_api.get("doc_sections") or {}).get("errors", "")),
+        "- panics_summary: {}".format((target_api.get("doc_sections") or {}).get("panics", "")),
         "",
-        "## Required Setup APIs",
+        "## Known Reachable Paths",
     ]
     for entry in setup_entries[:max_setup_apis]:
         api = entry["api"]
         lines.append(
-            "- {}: {} — {} [setup={} depth={}]".format(
+            "- {}: {} — {} [goal=reach_target basis=producer_chain produces={} depth={}]".format(
                 api["api_id"],
                 _api_display_path(api),
                 _api_signature_display(api),
@@ -233,8 +247,15 @@ def _render_context_markdown_unbudgeted(
                 entry["upstream_depth"],
             )
         )
+    if (
+        compile_hints["imports"]
+        or compile_hints["traits"]
+        or compile_hints["trait_methods"]
+        or compile_hints["enums"]
+    ):
+        lines.extend(["", "## Compile-Time Facts"])
     if compile_hints["imports"]:
-        lines.extend(["", "## Exact Import Paths"])
+        lines.extend(["### Exact Import Paths"])
         for item in compile_hints["imports"]:
             lines.append(
                 "- {} => {} [kind={}]".format(
@@ -244,7 +265,7 @@ def _render_context_markdown_unbudgeted(
                 )
             )
     if compile_hints["traits"]:
-        lines.extend(["", "## Required Traits"])
+        lines.extend(["", "### Required Traits"])
         for item in compile_hints["traits"]:
             lines.append(
                 "- {}: required_methods={}; provided_methods={}".format(
@@ -254,7 +275,7 @@ def _render_context_markdown_unbudgeted(
                 )
             )
     if compile_hints["trait_methods"]:
-        lines.extend(["", "## Trait Method Signatures"])
+        lines.extend(["", "### Trait Method Signatures"])
         for item in compile_hints["trait_methods"]:
             lines.append(
                 "- {}: {} [{}]".format(
@@ -264,7 +285,7 @@ def _render_context_markdown_unbudgeted(
                 )
             )
     if compile_hints["enums"]:
-        lines.extend(["", "## Enum Variants"])
+        lines.extend(["", "### Enum Variants"])
         for item in compile_hints["enums"]:
             suffix = " [non_exhaustive]" if item["is_non_exhaustive"] else ""
             lines.append(
@@ -287,7 +308,7 @@ def _render_context_markdown_unbudgeted(
                 _related_api_role(api, target_api),
             )
         )
-    lines.extend(["", "## Semantically Similar API Docs"])
+    lines.extend(["", "## Similar API Usage"])
     target_path = target_api.get("canonical_path", target.api_id)
     excluded_paths = {
         target_path,
@@ -306,30 +327,6 @@ def _render_context_markdown_unbudgeted(
     lines.extend(["", "## Rust Idioms"])
     for idiom in idioms[:max_idioms]:
         lines.append("- {}".format(idiom))
-    lines.extend(
-        [
-            "",
-            "## Generation Rules",
-            "- Use crate import name `{}`.".format(crate_import_name),
-            "- Call the target API in every harness variant.",
-            "- Emit `SERAPH_STEP_ENTER:<step_no>:<api_id>` before each targeted API call.",
-            "- Emit `SERAPH_STEP_OK:<step_no>:<api_id>` after successful return.",
-            "- Use early return for recoverable `Result` and `Option` paths.",
-            "- Use exact canonical module paths from `Exact Import Paths`; do not shorten imports unless that exact path is listed.",
-            "- If you implement a trait from `Required Traits`, implement every listed required method.",
-            "- If you override a trait method from `Trait Method Signatures`, copy the exact implementation-ready signature shown there.",
-            "- For trait-method targets with a `Self` receiver, call the target on a concrete implementor surfaced by `Required Setup APIs`, `Exact Import Paths`, or `Required Traits`; do not assume similarly named wrapper types implement the trait.",
-            "- If you match an enum from `Enum Variants`, cover every listed variant unless it is marked non-exhaustive.",
-            "- Do not create typed function-pointer bindings, `std::mem::size_of` placeholders, `PhantomData`, or dead helper functions merely to reference APIs or lifetime-bearing types.",
-            "- Before creating an `&mut` borrow, mutable slice view, or wrapper over an owner value, first compute any indexes, lengths, cloned source buffers, or read-only bytes you still need from that owner.",
-            "- After creating an `&mut` borrow into a value, do not read, slice, or immutably borrow the original owner again until that mutable borrow is no longer used.",
-            "- For constructors or adapters like `Type::new(owner.as_mut_slice())` that return an `&mut` wrapper, compute lengths, indexes, and any source bytes before the call, and do not read `owner` again until that wrapper is no longer used.",
-            "- Do not use `std::process::exit`, `panic!`, `unreachable!`, `todo!`, or `unimplemented!` inside placeholder helpers to fabricate missing values or references.",
-            "- Do not use `MaybeUninit`, `mem::zeroed`, `transmute`, `Box::into_raw`, or similar unsafe initialization tricks to fabricate missing target state unless the target or setup signatures explicitly require them.",
-            "- Do not use `target_lib` as a crate name.",
-            "",
-        ]
-    )
     return "\n".join(lines)
 
 
@@ -604,14 +601,13 @@ def _fit_context_budget(markdown: str, max_context_chars: int) -> str:
         return markdown[:max_context_chars]
 
     compression_order = [
-        "## Semantically Similar API Docs",
+        "## Similar API Usage",
         "## Rust Idioms",
         "## Related APIs",
-        "## Enum Variants",
-        "## Required Traits",
-        "## Exact Import Paths",
-        "## Required Setup APIs",
+        "## Compile-Time Facts",
+        "## Known Reachable Paths",
         "## Target API",
+        "## Crate Facts",
     ]
     compact = _render_markdown_sections(title, sections)
     for header in compression_order:

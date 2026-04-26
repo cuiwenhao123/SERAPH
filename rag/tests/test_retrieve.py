@@ -15,7 +15,7 @@ def test_rank_unsafe_targets_returns_only_unsafe_api():
     assert targets[0].score > 0
 
 
-def test_render_context_markdown_contains_codegen_rules():
+def test_render_context_markdown_uses_redesigned_sections():
     knowledge = load_knowledge(FIXTURE)
     graph = build_graph(knowledge)
     target = rank_unsafe_targets(graph)[0]
@@ -25,15 +25,15 @@ def test_render_context_markdown_contains_codegen_rules():
         target,
         idioms=["Handle Result with early return."],
     )
-    assert "# SERAPH RAG Harness Context" in markdown
-    assert "fixture_crate::Buffer::get_unchecked" in markdown
-    assert "fixture_crate::Buffer::new" in markdown
-    assert "SERAPH_STEP_ENTER" in markdown
-    assert "fixture_crate" in markdown
-    assert "implementation-ready signature" in markdown
-    assert "Do not create typed function-pointer bindings" in markdown
-    assert "Before creating an `&mut` borrow" in markdown
-    assert "do not read, slice, or immutably borrow the original owner again" in markdown
+    assert "# SERAPH Rust Harness Context" in markdown
+    assert "## Crate Facts" in markdown
+    assert "## Target API" in markdown
+    assert "## Known Reachable Paths" in markdown
+    assert "## Related APIs" in markdown
+    assert "## Compile-Time Facts" in markdown
+    assert "## Similar API Usage" in markdown
+    assert "## Rust Idioms" in markdown
+    assert "## Generation Rules" not in markdown
 
 
 def test_render_context_markdown_surfaces_compile_critical_import_trait_and_enum_facts():
@@ -294,13 +294,14 @@ def test_render_context_markdown_trait_target_surfaces_implementor_setup():
 
     markdown = render_context_markdown(knowledge, graph, target)
 
-    assert "## Required Setup APIs" in markdown
+    assert "## Known Reachable Paths" in markdown
     assert "fixture::BytesMut::with_capacity" in markdown
-    assert "## Exact Import Paths" in markdown
+    assert "## Compile-Time Facts" in markdown
+    assert "### Exact Import Paths" in markdown
     assert "type::fixture::BytesMut => fixture::BytesMut [kind=type]" in markdown
-    assert "## Required Traits" in markdown
+    assert "### Required Traits" in markdown
     assert "fixture::BufMut: required_methods=advance_mut, chunk_mut" in markdown
-    assert "## Trait Method Signatures" in markdown
+    assert "### Trait Method Signatures" in markdown
     assert "fixture::buf::BufMut::advance_mut: unsafe fn advance_mut(&mut self, usize) [required]" in markdown
 
 
@@ -561,5 +562,5 @@ def test_render_context_markdown_keeps_deep_setup_root_constructor():
 
     markdown = render_context_markdown(knowledge, graph, target)
 
-    setup_section = markdown.split("## Required Setup APIs", 1)[1].split("## Exact Import Paths", 1)[0]
+    setup_section = markdown.split("## Known Reachable Paths", 1)[1].split("## Compile-Time Facts", 1)[0]
     assert "fixture::T4::new" in setup_section
