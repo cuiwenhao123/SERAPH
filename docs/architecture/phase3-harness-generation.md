@@ -146,9 +146,15 @@ export SERAPH_LLM_WIRE_API='responses'
 
 Configuration boundary:
 
-- Phase 2 / RAG embedding side: `SERAPH_EMBEDDING_BACKEND`, optional `SERAPH_EMBEDDING_MODEL`
+- Phase 2 / RAG embedding side: `SERAPH_EMBEDDING_BACKEND`, `SERAPH_EMBEDDING_BASE_URL`, `SERAPH_EMBEDDING_MODEL`
 - Phase 3 / LLM side: `SERAPH_LLM_BASE_URL`, `SERAPH_LLM_API_KEY`, `SERAPH_LLM_MODEL`
 - Legacy `SERAPH_EMBEDDER` remains accepted only as an alias for the Phase 2 embedding backend name
+
+Load the embedding + LLM env file before unified `run` examples:
+
+```bash
+set -a && source configs/environments/.env.seraph-local && set +a
+```
 
 ## Prompt Bundle CLI Usage
 
@@ -165,7 +171,7 @@ cargo run -p seraph-cli -- phase3 harness-prompt \
 Or ask the unified CLI to create it after Phase 1/2 retrieval:
 
 ```bash
-SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
+cargo run -p seraph-cli -- run \
   --knowledge workspace/knowledge.json \
   --workspace-dir workspace \
   --round 1 \
@@ -208,7 +214,7 @@ Under the active `aflpp` style, the expected source shape is a normal Rust binar
 The unified CLI can run retrieval, prompt creation, and response splitting together:
 
 ```bash
-SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
+cargo run -p seraph-cli -- run \
   --knowledge workspace/knowledge.json \
   --workspace-dir workspace \
   --round 1 \
@@ -242,7 +248,7 @@ cargo run -p seraph-cli -- phase3 compile-check \
 The unified CLI runs compile-check across all generated variants:
 
 ```bash
-SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
+cargo run -p seraph-cli -- run \
   --knowledge workspace/knowledge.json \
   --workspace-dir workspace \
   --round 1 \
@@ -323,7 +329,7 @@ Each `fix_request_RRR_SS.json` includes the RAG context, original harness source
 The unified CLI can generate fixer requests after compile-check:
 
 ```bash
-SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
+cargo run -p seraph-cli -- run \
   --knowledge workspace/knowledge.json \
   --workspace-dir workspace \
   --round 1 \
@@ -523,7 +529,7 @@ By default these write commands only update the acceptance index itself. If `--c
 The unified CLI can now continue from generated harnesses into compile-check, fixer request generation, and batch fix-loop execution:
 
 ```bash
-SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
+cargo run -p seraph-cli -- run \
   --knowledge workspace/knowledge.json \
   --workspace-dir workspace \
   --round 1 \

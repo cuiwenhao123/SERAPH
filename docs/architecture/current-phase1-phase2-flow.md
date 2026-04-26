@@ -24,24 +24,25 @@ Install Python dependencies from the repository root:
 python3 -m pip install --user -e 'rag[test]'
 ```
 
-The current embedding backend defaults to deterministic local hashing. No external model is required:
+Load an embedding env file before Phase 2 commands:
 
 ```bash
-export SERAPH_EMBEDDING_BACKEND=hashing
+set -a && source configs/environments/.env.seraph-local && set +a
 export PYTHONPATH="$PWD/rag"
 ```
 
 Phase 2 RAG reads the embedding configuration only:
 
 - `SERAPH_EMBEDDING_BACKEND`
-- optional `SERAPH_EMBEDDING_MODEL`
+- `SERAPH_EMBEDDING_BASE_URL`
+- `SERAPH_EMBEDDING_MODEL`
 
 Legacy `SERAPH_EMBEDDER` remains accepted as a backward-compatible alias.
 
 ## One-Command Fixture Smoke Test
 
 ```bash
-SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
+cargo run -p seraph-cli -- run \
   --knowledge rag/tests/fixtures/s3_audit_fixture_knowledge.json \
   --workspace-dir /tmp/seraph-phase2-smoke \
   --round 1
@@ -136,7 +137,7 @@ The context includes:
 `seraph-cli run` wraps the current Phase 1/2 path:
 
 ```bash
-SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
+cargo run -p seraph-cli -- run \
   --manifest-path /path/to/target/Cargo.toml \
   --workspace-dir workspace \
   --round 1
@@ -145,7 +146,7 @@ SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
 If `knowledge.json` already exists:
 
 ```bash
-SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
+cargo run -p seraph-cli -- run \
   --knowledge workspace/knowledge.json \
   --workspace-dir workspace \
   --round 1
@@ -165,7 +166,7 @@ For the real fixture smoke:
 
 ```bash
 rm -rf /tmp/seraph-real-fixture-rag
-SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
+cargo run -p seraph-cli -- run \
   --knowledge rag/tests/fixtures/s3_audit_fixture_knowledge.json \
   --workspace-dir /tmp/seraph-real-fixture-rag \
   --round 4

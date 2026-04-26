@@ -72,10 +72,11 @@ Phase 3 LLM environment variables:
 
 Supported embedding backends today:
 
-- `hashing`: deterministic local fallback, no external service required
 - `openai_compatible`: OpenAI-compatible `/embeddings` endpoint
 
 `siliconflow` is accepted as an alias of `openai_compatible`.
+
+The backend defaults to `openai_compatible` when `SERAPH_EMBEDDING_BACKEND` is unset. Load an env file such as `configs/environments/.env.seraph-local` or `configs/examples/seraph.third_party.env.example` before running Phase 2.
 
 ## Current Execution Flow
 

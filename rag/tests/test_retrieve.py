@@ -201,6 +201,156 @@ def test_render_context_markdown_surfaces_compile_critical_import_trait_and_enum
     assert "fixture::io::Whence: Size | Set | Cur | End" in compile_facts
 
 
+def test_render_context_markdown_surfaces_type_trait_facts_for_relevant_argument_types():
+    knowledge = {
+        "crate_meta": {"crate_import_name": "fixture"},
+        "modules": [{"module_id": "mod::fixture", "canonical_path": "fixture"}],
+        "types": [
+            {
+                "type_id": "type::fixture::Context",
+                "name": "Context",
+                "canonical_path": "fixture::Context",
+                "public_anchor_module_id": "mod::fixture",
+                "kind": "struct",
+                "variants": [],
+                "has_hidden_fields": False,
+                "has_hidden_variants": False,
+            },
+            {
+                "type_id": "type::fixture::Selector",
+                "name": "Selector",
+                "canonical_path": "fixture::Selector",
+                "public_anchor_module_id": "mod::fixture",
+                "kind": "enum",
+                "variants": [{"name": "A"}, {"name": "B"}],
+                "has_hidden_fields": False,
+                "has_hidden_variants": False,
+            },
+            {
+                "type_id": "type::fixture::Payload",
+                "name": "Payload",
+                "canonical_path": "fixture::Payload",
+                "public_anchor_module_id": "mod::fixture",
+                "kind": "struct",
+                "variants": [],
+                "has_hidden_fields": False,
+                "has_hidden_variants": False,
+            },
+        ],
+        "trait_registry": [
+            {
+                "trait_id": "trait::core::fmt::Debug",
+                "name": "Debug",
+                "canonical_path": "core::fmt::Debug",
+                "is_unsafe": False,
+            },
+            {
+                "trait_id": "trait::core::clone::Clone",
+                "name": "Clone",
+                "canonical_path": "core::clone::Clone",
+                "is_unsafe": False,
+            },
+            {
+                "trait_id": "trait::core::marker::Copy",
+                "name": "Copy",
+                "canonical_path": "core::marker::Copy",
+                "is_unsafe": False,
+            },
+        ],
+        "trait_impl_registry": [
+            {
+                "trait_impl_id": "impl::fixture::Selector->Debug",
+                "target_type_id": "type::fixture::Selector",
+                "trait_ref_text": "core::fmt::Debug",
+                "for_type_text": "Selector",
+                "trait_id": "trait::core::fmt::Debug",
+                "trait_name": "Debug",
+                "trait_canonical_path": "core::fmt::Debug",
+                "trait_origin": "external",
+                "source": {"file": "src/lib.rs", "start_line": 10, "end_line": 10},
+                "associated_type_bindings": [],
+                "associated_const_bindings": [],
+                "where_clauses": [],
+                "cfg_attrs": [],
+                "is_unsafe": False,
+            },
+            {
+                "trait_impl_id": "impl::fixture::Payload->Clone",
+                "target_type_id": "type::fixture::Payload",
+                "trait_ref_text": "core::clone::Clone",
+                "for_type_text": "Payload",
+                "trait_id": "trait::core::clone::Clone",
+                "trait_name": "Clone",
+                "trait_canonical_path": "core::clone::Clone",
+                "trait_origin": "external",
+                "source": {"file": "src/lib.rs", "start_line": 12, "end_line": 12},
+                "associated_type_bindings": [],
+                "associated_const_bindings": [],
+                "where_clauses": [],
+                "cfg_attrs": [],
+                "is_unsafe": False,
+            },
+            {
+                "trait_impl_id": "impl::fixture::Payload->Copy",
+                "target_type_id": "type::fixture::Payload",
+                "trait_ref_text": "core::marker::Copy",
+                "for_type_text": "Payload",
+                "trait_id": "trait::core::marker::Copy",
+                "trait_name": "Copy",
+                "trait_canonical_path": "core::marker::Copy",
+                "trait_origin": "external",
+                "source": {"file": "src/lib.rs", "start_line": 13, "end_line": 13},
+                "associated_type_bindings": [],
+                "associated_const_bindings": [],
+                "where_clauses": [],
+                "cfg_attrs": [],
+                "is_unsafe": False,
+            },
+        ],
+        "apis": [
+            {
+                "api_id": "api::fixture::Context::set_param",
+                "name": "set_param",
+                "canonical_path": "fixture::Context::set_param",
+                "public_anchor_module_id": "mod::fixture",
+                "owner_type_id": "type::fixture::Context",
+                "signature": "fn set_param(&Self, Selector, Payload) -> ()",
+                "receiver": "&Self",
+                "arg_types": ["Selector", "Payload"],
+                "return_type": "()",
+                "api_kind": "method",
+                "contains_unsafe_block": True,
+            },
+            {
+                "api_id": "api::fixture::Context::new",
+                "name": "new",
+                "canonical_path": "fixture::Context::new",
+                "public_anchor_module_id": "mod::fixture",
+                "owner_type_id": "type::fixture::Context",
+                "signature": "fn new() -> Context",
+                "receiver": "",
+                "arg_types": [],
+                "return_type": "Context",
+                "api_kind": "associated_constructor",
+            },
+        ],
+        "risk_facts": {
+            "unsafe_functions": [],
+            "ffi_functions": [],
+            "panic_sites": [],
+        },
+    }
+    graph = build_graph(knowledge)
+    target = rank_unsafe_targets(graph)[0]
+
+    markdown = render_context_markdown(knowledge, graph, target)
+
+    compile_facts = markdown.split("## Compile-Time Facts", 1)[1].split("## Related APIs", 1)[0]
+    assert "### Type Trait Facts" in compile_facts
+    assert "fixture::Selector [kind=enum]: Copy=no; Clone=no; other_explicit_impls=core::fmt::Debug" in compile_facts
+    assert "fixture::Payload [kind=struct]: Copy=yes; Clone=yes; other_explicit_impls=(none)" in compile_facts
+
+
 def test_render_context_markdown_trait_target_surfaces_implementor_setup():
     knowledge = {
         "crate_meta": {"crate_import_name": "fixture"},

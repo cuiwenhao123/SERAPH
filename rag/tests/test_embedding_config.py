@@ -1,7 +1,6 @@
 import pytest
 
 from seraph_rag.embeddings import (
-    HashingEmbedder,
     OpenAICompatibleEmbedder,
     build_embedder,
     embedder_backend_name,
@@ -9,21 +8,19 @@ from seraph_rag.embeddings import (
 )
 
 
-def test_build_embedder_defaults_to_hashing(monkeypatch):
+def test_build_embedder_defaults_to_openai_compatible(monkeypatch):
     monkeypatch.delenv("SERAPH_EMBEDDER", raising=False)
     monkeypatch.delenv("SERAPH_EMBEDDING_BACKEND", raising=False)
-    monkeypatch.delenv("SERAPH_EMBEDDING_MODEL", raising=False)
     embedder = build_embedder()
-    assert isinstance(embedder, HashingEmbedder)
-    assert embedder_backend_name() == "hashing"
-    assert embedding_model_name() is None
+    assert isinstance(embedder, OpenAICompatibleEmbedder)
+    assert embedder_backend_name() == "openai_compatible"
+    assert embedding_model_name() == "test-embedding-model"
 
 
-def test_build_embedder_accepts_explicit_hashing(monkeypatch):
+def test_build_embedder_rejects_explicit_hashing(monkeypatch):
     monkeypatch.setenv("SERAPH_EMBEDDING_BACKEND", "hashing")
-    embedder = build_embedder()
-    assert isinstance(embedder, HashingEmbedder)
-    assert embedder_backend_name() == "hashing"
+    with pytest.raises(ValueError, match="unsupported SERAPH_EMBEDDING_BACKEND"):
+        build_embedder()
 
 
 def test_build_embedder_rejects_unknown_backend(monkeypatch):
@@ -34,34 +31,30 @@ def test_build_embedder_rejects_unknown_backend(monkeypatch):
 
 def test_build_embedder_accepts_legacy_backend_alias(monkeypatch):
     monkeypatch.delenv("SERAPH_EMBEDDING_BACKEND", raising=False)
-    monkeypatch.setenv("SERAPH_EMBEDDER", "hashing")
+    monkeypatch.setenv("SERAPH_EMBEDDER", "openai_compatible")
 
     embedder = build_embedder()
 
-    assert isinstance(embedder, HashingEmbedder)
-    assert embedder_backend_name() == "hashing"
+    assert isinstance(embedder, OpenAICompatibleEmbedder)
+    assert embedder_backend_name() == "openai_compatible"
 
 
 def test_build_embedder_prefers_new_backend_name_over_legacy_alias(monkeypatch):
-    monkeypatch.setenv("SERAPH_EMBEDDING_BACKEND", "hashing")
+    monkeypatch.setenv("SERAPH_EMBEDDING_BACKEND", "openai_compatible")
     monkeypatch.setenv("SERAPH_EMBEDDER", "unknown")
 
     embedder = build_embedder()
 
-    assert isinstance(embedder, HashingEmbedder)
-    assert embedder_backend_name() == "hashing"
+    assert isinstance(embedder, OpenAICompatibleEmbedder)
+    assert embedder_backend_name() == "openai_compatible"
 
 
-def test_build_embedder_ignores_llm_model_env(monkeypatch):
-    monkeypatch.delenv("SERAPH_EMBEDDING_BACKEND", raising=False)
-    monkeypatch.delenv("SERAPH_EMBEDDER", raising=False)
+def test_build_embedder_does_not_fall_back_to_llm_model_env(monkeypatch):
     monkeypatch.delenv("SERAPH_EMBEDDING_MODEL", raising=False)
     monkeypatch.setenv("SERAPH_LLM_MODEL", "some-llm")
 
-    embedder = build_embedder()
-
-    assert isinstance(embedder, HashingEmbedder)
-    assert embedder_backend_name() == "hashing"
+    with pytest.raises(ValueError, match="SERAPH_EMBEDDING_MODEL"):
+        build_embedder()
     assert embedding_model_name() is None
 
 

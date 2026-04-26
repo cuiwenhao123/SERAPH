@@ -47,9 +47,13 @@ Why these pins exist:
 
 ## Embedding Model Configuration
 
-No external embedding model is required for the current Phase 2 prototype.
+Phase 2 now requires an OpenAI-compatible embedding endpoint.
 
-By default, SERAPH uses `HashingEmbedder(dimensions=128)`, a deterministic local fallback implemented in `rag/seraph_rag/embeddings.py`. This means Phase 2 can run without configuring UniXcoder, Transformers, PyTorch, GPU drivers, or model download credentials.
+Load one of the example env files before running Phase 2 commands:
+
+```bash
+set -a && source configs/environments/.env.seraph-local && set +a
+```
 
 Phase 2 RAG reads embedding configuration only. It does not read Phase 3 LLM configuration.
 
@@ -67,7 +71,7 @@ Backward-compatible legacy alias:
 The backend is selected with `SERAPH_EMBEDDING_BACKEND`:
 
 ```bash
-SERAPH_EMBEDDING_BACKEND=hashing cargo run -p seraph-cli -- run \
+cargo run -p seraph-cli -- run \
   --knowledge rag/tests/fixtures/minimal_knowledge.json \
   --workspace-dir /tmp/seraph-rag-smoke \
   --round 1
@@ -77,7 +81,6 @@ Supported values today:
 
 | Value | Status | Notes |
 |-------|--------|-------|
-| `hashing` | default, supported | 128-dimensional deterministic local vectors |
 | `openai_compatible` | supported | Calls an OpenAI-compatible `/embeddings` endpoint |
 
 Provider note:
@@ -92,12 +95,10 @@ The vector DB stores the backend name in Chroma collection metadata. If `SERAPH_
 
 Trade-off:
 
-- The default hashing embedder is fast, deterministic, offline-friendly, and suitable for smoke tests and pipeline development.
-- Retrieval quality is weaker than a code-aware neural embedding model.
-- OpenAI-compatible embedding providers can improve semantic retrieval quality while keeping the same Phase 2 interface.
+- OpenAI-compatible embedding providers keep the same Phase 2 interface while improving semantic retrieval quality over the removed local fallback.
 - Any model-backed embedder must use the same backend for both indexing and querying.
 
-Important: do not call ChromaDB `query_texts` directly against SERAPH's current collections. The current prototype indexes with 128-dimensional hashing embeddings, while ChromaDB's default text embedding function may use a different dimensionality. Use `cargo run -p seraph-cli -- phase2 retrieve` or the `seraph_rag.retrieve` library helpers, which query with explicit matching embeddings.
+Important: do not call ChromaDB `query_texts` directly against SERAPH's current collections. Use `cargo run -p seraph-cli -- phase2 retrieve` or the `seraph_rag.retrieve` library helpers, which query with explicit matching embeddings and backend metadata checks.
 
 ## Smoke Test
 

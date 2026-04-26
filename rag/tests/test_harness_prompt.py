@@ -40,6 +40,11 @@ def test_build_prompt_bundle_uses_fact_grounded_prompt_contract():
         in bundle["system_prompt"]
     )
     assert "`Related APIs` are the main building blocks" in bundle["system_prompt"]
+    assert "`Type Trait Facts` inside `Compile-Time Facts` override default Rust ownership assumptions." in bundle["system_prompt"]
+    assert (
+        "Do not assume enums, array elements, or selector values are `Copy` or `Clone` unless `Type Trait Facts` explicitly support that."
+        in bundle["system_prompt"]
+    )
     assert "Generate a normal Rust binary with `fn main()`." in bundle["system_prompt"]
     assert (
         "Read fuzz bytes from stdin or an optional file path argument using only the Rust standard library."
@@ -55,6 +60,10 @@ def test_build_prompt_bundle_uses_fact_grounded_prompt_contract():
     assert "Prefer `Related APIs` as the main construction pool." in bundle["user_prompt"]
     assert (
         "Use `Known Reachable Paths` as fact-grounded reachability hints when helpful, but do not copy them mechanically."
+        in bundle["user_prompt"]
+    )
+    assert (
+        "If `Type Trait Facts` do not explicitly say a type is `Copy` or `Clone`, do not assume by-value indexing, repeated reuse, or `.clone()` is valid for that type."
         in bundle["user_prompt"]
     )
     assert "Keep all logic inside a normal Rust binary `fn main()`." in bundle["user_prompt"]

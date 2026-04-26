@@ -471,6 +471,84 @@ def test_render_context_uses_deref_wrapper_producer_for_target_owner_type():
     assert "Source::make_wrapper" in required
 
 
+def owner_bridge_knowledge():
+    return {
+        "crate_meta": {"crate_import_name": "bridge_fixture"},
+        "modules": [{"module_id": "mod::bridge_fixture", "canonical_path": "bridge_fixture"}],
+        "types": [
+            {
+                "type_id": "type::bridge_fixture::Path",
+                "name": "Path",
+                "canonical_path": "bridge_fixture::Path",
+                "public_anchor_module_id": "mod::bridge_fixture",
+            },
+            {
+                "type_id": "type::bridge_fixture::Components",
+                "name": "Components",
+                "canonical_path": "bridge_fixture::Components",
+                "public_anchor_module_id": "mod::bridge_fixture",
+            },
+        ],
+        "apis": [
+            {
+                "api_id": "api::bridge_fixture::Path::new",
+                "name": "new",
+                "canonical_path": "bridge_fixture::Path::new",
+                "public_anchor_module_id": "mod::bridge_fixture",
+                "owner_type_id": "type::bridge_fixture::Path",
+                "api_kind": "constructor",
+                "signature_text": "fn new() -> Path",
+                "return_type": "Path",
+                "arg_types": [],
+                "doc_sections": {"safety": ""},
+            },
+            {
+                "api_id": "api::bridge_fixture::Path::components",
+                "name": "components",
+                "canonical_path": "bridge_fixture::Path::components",
+                "public_anchor_module_id": "mod::bridge_fixture",
+                "owner_type_id": "type::bridge_fixture::Path",
+                "api_kind": "inherent_method",
+                "signature_text": "fn components(&Self) -> Components<'_>",
+                "receiver": "&Self",
+                "return_type": "Components<'_>",
+                "arg_types": [],
+                "doc_sections": {"safety": ""},
+            },
+            {
+                "api_id": "api::bridge_fixture::Components::as_path",
+                "name": "as_path",
+                "canonical_path": "bridge_fixture::Components::as_path",
+                "public_anchor_module_id": "mod::bridge_fixture",
+                "owner_type_id": "type::bridge_fixture::Components",
+                "api_kind": "inherent_method",
+                "signature_text": "fn as_path(&Self) -> &'_ Path",
+                "receiver": "&Self",
+                "return_type": "&'_ Path",
+                "arg_types": [],
+                "contains_unsafe_block": True,
+                "doc_sections": {"safety": ""},
+            },
+        ],
+        "trait_registry": [],
+        "trait_impl_registry": [],
+        "risk_facts": {"unsafe_functions": [], "ffi_functions": [], "panic_sites": []},
+    }
+
+
+def test_render_context_prioritizes_owner_bridge_api_in_known_reachable_paths():
+    knowledge = owner_bridge_knowledge()
+    graph = build_graph(knowledge)
+    target = rank_unsafe_targets(graph)[0]
+
+    markdown = render_context_markdown(knowledge, graph, target, max_setup_apis=1)
+
+    required = markdown.split("## Known Reachable Paths", 1)[1].split("## Compile-Time Facts", 1)[0]
+    assert "bridge_fixture::Path::components" in required
+    assert "basis=owner_bridge" in required
+    assert "bridge_fixture::Path::new" not in required
+
+
 def unconstructible_target_knowledge():
     return {
         "crate_meta": {"crate_import_name": "construct_fixture"},

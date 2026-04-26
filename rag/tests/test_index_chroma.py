@@ -22,8 +22,8 @@ def test_index_knowledge_writes_api_docs_and_idioms(tmp_path):
     )
     assert api_docs.count() == 3
     assert rust_idioms.count() >= 6
-    assert api_docs.metadata["seraph:embedder"] == "hashing"
-    assert rust_idioms.metadata["seraph:embedder"] == "hashing"
+    assert api_docs.metadata["seraph:embedder"] == "openai_compatible"
+    assert rust_idioms.metadata["seraph:embedder"] == "openai_compatible"
     assert "WARNING: contains unsafe code block" in api_result["documents"][0]
     assert api_result["metadatas"][0]["has_unsafe"] is True
 

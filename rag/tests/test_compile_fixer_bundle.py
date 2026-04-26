@@ -56,6 +56,11 @@ def test_write_compile_fixer_bundles_for_failed_reports(tmp_path):
         "borrowed handles."
         in data["rules"]
     )
+    assert "Treat Type Trait Facts in the rag_context as authoritative for Copy/Clone and ownership assumptions." in data["rules"]
+    assert (
+        "Do not add `.clone()` to fix move errors unless the rag_context explicitly shows that the moved type implements `Clone`."
+        in data["rules"]
+    )
     assert "Prefer Required Setup APIs for opaque wrappers and borrowed handles." not in data["rules"]
 
 

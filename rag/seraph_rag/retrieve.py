@@ -194,15 +194,16 @@ def _render_context_markdown_unbudgeted(
     crate_import_name = knowledge["crate_meta"]["crate_import_name"]
     target_api = apis[target.api_id]
     setup_entries = _collect_required_setup_entries(knowledge, graph, target_api)
+    visible_setup_entries = _visible_setup_entries(setup_entries, max_setup_apis)
     compile_hints = _collect_compile_hints(
         knowledge,
         graph,
         target_api,
-        setup_entries[:max_setup_apis],
+        visible_setup_entries,
         type_index,
         trait_index,
     )
-    setup_api_ids = {entry["api"]["api_id"] for entry in setup_entries[:max_setup_apis]}
+    setup_api_ids = {entry["api"]["api_id"] for entry in visible_setup_entries}
     related_apis = _collect_related_apis(
         knowledge,
         graph,
@@ -213,7 +214,7 @@ def _render_context_markdown_unbudgeted(
     )
     variant_opportunities = _collect_variant_opportunities(
         target_api,
-        setup_entries[:max_setup_apis],
+        visible_setup_entries,
         related_apis,
     )
     lines = [
@@ -241,13 +242,15 @@ def _render_context_markdown_unbudgeted(
         "",
         "## Known Reachable Paths",
     ]
-    for entry in setup_entries[:max_setup_apis]:
+    for entry in visible_setup_entries:
         api = entry["api"]
         lines.append(
-            "- {}: {} — {} [goal=reach_target basis=producer_chain produces={} depth={}]".format(
+            "- {}: {} — {} [goal={} basis={} produces={} depth={}]".format(
                 api["api_id"],
                 _api_display_path(api),
                 _api_signature_display(api),
+                entry.get("goal", "reach_target"),
+                entry.get("basis", "producer_chain"),
                 ", ".join(entry["produced_types"]),
                 entry["upstream_depth"],
             )
@@ -294,6 +297,18 @@ def _render_context_markdown_unbudgeted(
                     suffix,
                 )
             )
+    if compile_hints["type_traits"]:
+        lines.extend(["", "### Type Trait Facts"])
+        for item in compile_hints["type_traits"]:
+            lines.append(
+                "- {} [kind={}]: Copy={}; Clone={}; other_explicit_impls={}".format(
+                    item["path"],
+                    item["kind"],
+                    "yes" if item["is_copy"] else "no",
+                    "yes" if item["is_clone"] else "no",
+                    ", ".join(item["other_explicit_impls"]) or "(none)",
+                )
+            )
     lines.extend([
         "",
         "## Related APIs",
@@ -323,7 +338,7 @@ def _render_context_markdown_unbudgeted(
     target_path = target_api.get("canonical_path", target.api_id)
     excluded_paths = {
         target_path,
-        *[entry["api"].get("canonical_path", entry["api"]["api_id"]) for entry in setup_entries[:max_setup_apis]],
+        *[entry["api"].get("canonical_path", entry["api"]["api_id"]) for entry in visible_setup_entries],
         *[api.get("canonical_path", api["api_id"]) for api in related_apis],
     }
     excluded_api_ids = {target.api_id, *setup_api_ids, *[api["api_id"] for api in related_apis]}
@@ -412,7 +427,7 @@ def render_context_from_stores(
 
 def _ensure_collection_embedder_matches(collection) -> None:
     expected = embedder_backend_name()
-    actual = (collection.metadata or {}).get("seraph:embedder", "hashing")
+    actual = (collection.metadata or {}).get("seraph:embedder", "unknown")
     if actual != expected:
         raise ValueError(
             "embedding backend mismatch: collection {!r} was indexed with {!r}, "
@@ -724,12 +739,17 @@ def _collect_required_setup_entries(
                 api_id,
                 {
                     "api": api,
+                    "goal": "reach_target",
+                    "basis": "producer_chain",
                     "upstream_depth": depth,
                     "produced_types": set(),
                 },
             )
             entry["upstream_depth"] = max(entry["upstream_depth"], depth)
             entry["produced_types"].add(_type_display_name(type_index.get(type_id), type_id))
+            basis = _setup_entry_basis(api, target_api, type_id)
+            if basis == "owner_bridge":
+                entry["basis"] = basis
             if depth >= max_depth:
                 continue
             for next_type_id in _api_setup_dependency_type_ids(graph, api):
@@ -764,6 +784,31 @@ def _collect_required_setup_entries(
     return entries
 
 
+def _visible_setup_entries(entries: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    if limit <= 0:
+        return []
+    if len(entries) <= limit:
+        return entries[:]
+
+    selected = list(entries[:limit])
+    hidden_owner_bridges = [
+        entry for entry in entries[limit:] if entry.get("basis") == "owner_bridge"
+    ]
+    for hidden in hidden_owner_bridges:
+        replace_index = next(
+            (
+                index
+                for index in range(len(selected) - 1, -1, -1)
+                if selected[index].get("basis") != "owner_bridge"
+            ),
+            None,
+        )
+        if replace_index is None:
+            break
+        selected[replace_index] = hidden
+    return selected
+
+
 def _collect_compile_hints(
     knowledge: Dict[str, Any],
     graph: nx.Graph,
@@ -776,6 +821,7 @@ def _collect_compile_hints(
     relevant_api_ids = [target_api["api_id"], *[entry["api"]["api_id"] for entry in setup_entries]]
     relevant_type_ids: Set[str] = set()
     relevant_trait_ids: Set[str] = set()
+    type_trait_candidate_ids: Set[str] = set()
 
     for api_id in relevant_api_ids:
         api = apis_by_id.get(api_id)
@@ -787,7 +833,9 @@ def _collect_compile_hints(
             relevant_type_ids.add(owner_type_id)
         if api and api.get("owner_trait_id"):
             relevant_trait_ids.add(api["owner_trait_id"])
-        relevant_type_ids.update(_graph_neighbor_ids(graph, api_id, "api_accepts_type"))
+        accepted_type_ids = _graph_neighbor_ids(graph, api_id, "api_accepts_type")
+        relevant_type_ids.update(accepted_type_ids)
+        type_trait_candidate_ids.update(accepted_type_ids)
         relevant_type_ids.update(_expanded_produced_type_ids(graph, api_id))
         relevant_trait_ids.update(_graph_neighbor_ids(graph, api_id, "api_accepts_trait"))
 
@@ -884,11 +932,50 @@ def _collect_compile_hints(
             }
         )
 
+    trait_impls_by_type: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for impl_info in knowledge.get("trait_impl_registry", []):
+        target_type_id = impl_info.get("target_type_id")
+        if target_type_id:
+            trait_impls_by_type[str(target_type_id)].append(impl_info)
+
+    type_traits = []
+    for type_id in sorted(
+        type_trait_candidate_ids,
+        key=lambda value: _type_display_name(type_index.get(value), value),
+    ):
+        type_info = type_index.get(type_id)
+        if not type_info:
+            continue
+        impl_paths = sorted(
+            dict.fromkeys(
+                path
+                for path in (
+                    _trait_impl_display_path(impl_info)
+                    for impl_info in trait_impls_by_type.get(type_id, [])
+                )
+                if path
+            )
+        )
+        type_traits.append(
+            {
+                "path": _type_display_name(type_info, type_id),
+                "kind": type_info.get("kind", "unknown"),
+                "is_copy": any(_is_copy_trait_path(path) for path in impl_paths),
+                "is_clone": any(_is_clone_trait_path(path) for path in impl_paths),
+                "other_explicit_impls": [
+                    path
+                    for path in impl_paths
+                    if not _is_copy_trait_path(path) and not _is_clone_trait_path(path)
+                ],
+            }
+        )
+
     return {
         "imports": imports,
         "traits": traits,
         "trait_methods": trait_methods,
         "enums": enums,
+        "type_traits": type_traits,
     }
 
 
@@ -1115,6 +1202,25 @@ def _normalize_impl_receiver(receiver: str) -> str:
     return normalized
 
 
+def _trait_impl_display_path(impl_info: Dict[str, Any]) -> str:
+    return (
+        str(impl_info.get("trait_canonical_path") or "").strip()
+        or str(impl_info.get("trait_ref_text") or "").strip()
+        or str(impl_info.get("trait_name") or "").strip()
+        or str(impl_info.get("trait_id") or "").strip()
+    )
+
+
+def _is_copy_trait_path(path: str) -> bool:
+    normalized = path.strip()
+    return normalized == "core::marker::Copy" or normalized.endswith("::Copy") or normalized == "Copy"
+
+
+def _is_clone_trait_path(path: str) -> bool:
+    normalized = path.strip()
+    return normalized == "core::clone::Clone" or normalized.endswith("::Clone") or normalized == "Clone"
+
+
 def _api_receiver_mentions_self(api: Dict[str, Any]) -> bool:
     receiver = str(api.get("receiver") or "").strip().lower()
     return "self" in receiver
@@ -1160,6 +1266,23 @@ def _api_has_constructible_seed_chain(
         )
         for seed_type_id in seed_type_ids
     )
+
+
+def _setup_entry_basis(
+    api: Dict[str, Any],
+    target_api: Dict[str, Any],
+    produced_type_id: str,
+) -> str:
+    target_owner_type_id = target_api.get("owner_type_id")
+    if (
+        target_owner_type_id
+        and produced_type_id == target_owner_type_id
+        and api.get("owner_type_id")
+        and api.get("owner_type_id") != target_owner_type_id
+        and _api_receiver_mentions_self(api)
+    ):
+        return "owner_bridge"
+    return "producer_chain"
 
 
 def _is_low_signal_type(type_info: Optional[Dict[str, Any]]) -> bool:

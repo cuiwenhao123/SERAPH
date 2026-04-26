@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import math
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Protocol
@@ -12,24 +10,6 @@ from urllib.request import Request, urlopen
 class Embedder(Protocol):
     def encode(self, texts: List[str]) -> List[List[float]]:
         ...
-
-
-@dataclass(frozen=True)
-class HashingEmbedder:
-    dimensions: int = 128
-
-    def encode(self, texts: List[str]) -> List[List[float]]:
-        return [self._encode_one(text) for text in texts]
-
-    def _encode_one(self, text: str) -> List[float]:
-        vector = [0.0] * self.dimensions
-        for token in text.lower().replace("::", " ").split():
-            digest = hashlib.sha256(token.encode("utf-8")).digest()
-            index = int.from_bytes(digest[:4], "big") % self.dimensions
-            sign = 1.0 if digest[4] % 2 == 0 else -1.0
-            vector[index] += sign
-        norm = math.sqrt(sum(value * value for value in vector)) or 1.0
-        return [value / norm for value in vector]
 
 
 @dataclass(frozen=True)
@@ -84,7 +64,7 @@ def embedding_backend_name() -> str:
             normalized = _normalize_backend_name(value)
             if normalized:
                 return normalized
-    return "hashing"
+    return "openai_compatible"
 
 
 def embedding_model_name() -> Optional[str]:
@@ -101,8 +81,6 @@ def embedder_backend_name() -> str:
 
 def build_embedder() -> Embedder:
     backend = embedding_backend_name()
-    if backend == "hashing":
-        return HashingEmbedder()
     if backend == "openai_compatible":
         base_url = _required_env("SERAPH_EMBEDDING_BASE_URL")
         model = _required_env("SERAPH_EMBEDDING_MODEL")
@@ -116,7 +94,7 @@ def build_embedder() -> Embedder:
             extra_body=_json_object_env("SERAPH_EMBEDDING_EXTRA_BODY"),
         )
     raise ValueError(
-        "unsupported SERAPH_EMBEDDING_BACKEND={!r}; currently supported: hashing, openai_compatible".format(
+        "unsupported SERAPH_EMBEDDING_BACKEND={!r}; currently supported: openai_compatible".format(
             backend
         )
     )

@@ -10,12 +10,14 @@ Configuration boundary:
 - Phase 3 uses LLM commands and LLM environment variables such as `SERAPH_LLM_BASE_URL`, `SERAPH_LLM_API_KEY`, and `SERAPH_LLM_MODEL`
 - Legacy `SERAPH_EMBEDDER` remains accepted as a backward-compatible alias for `SERAPH_EMBEDDING_BACKEND`
 
-For real Phase 2 embedding services, `openai_compatible` is supported through:
+Phase 2 currently uses the `openai_compatible` embedding backend through:
 
 - `SERAPH_EMBEDDING_BASE_URL`
 - `SERAPH_EMBEDDING_MODEL`
 - optional `SERAPH_EMBEDDING_API_KEY`
 - optional `SERAPH_EMBEDDING_API_PATH`, `SERAPH_EMBEDDING_TIMEOUT_SECONDS`
+
+If `SERAPH_EMBEDDING_BACKEND` is unset, SERAPH defaults it to `openai_compatible`.
 
 Examples:
 

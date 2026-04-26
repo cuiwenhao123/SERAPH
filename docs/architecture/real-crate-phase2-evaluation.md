@@ -90,7 +90,7 @@ Evaluation base: `/tmp/seraph-real-crate-phase2-eval-v3`.
 - `bytes` is the best-quality result: safety docs are present, related APIs focus on `UninitSlice`, and similar docs/idioms are relevant to raw pointer and initialization invariants.
 - `hashbrown` is correct but still broad: owner-type graph expansion around `HashMap` can produce many related APIs. The related API ranking/limit now keeps context complete, but future work should rank constructors and safety-doc/unchecked APIs more precisely.
 - `s3-audit-fixture` is useful for regression because it exercises `contains_unsafe_block`, but its free-function raw pointer target has limited graph-neighbor context.
-- Current hashing embeddings are adequate for pipeline validation, but semantic similarity quality is expected to improve with a neural code embedding backend later.
+- Earlier hashing-based validation established the pipeline, but the active path now uses OpenAI-compatible embedding backends for real-crate evaluation.
 
 ## Remaining Phase 1/2 Improvements
 

@@ -42,12 +42,14 @@ How to use the context:
 - `Known Reachable Paths` are fact-grounded reachability hints surfaced from the current SERAPH context. They may be partial and are not the only allowed sequence.
 - `Related APIs` are the main building blocks for designing the harness.
 - `Compile-Time Facts` are hard constraints, not suggestions.
+- `Type Trait Facts` inside `Compile-Time Facts` override default Rust ownership assumptions.
 - `Variant Opportunities` indicate where diversity is likely to be meaningful.
 - `Rust Idioms` are safety and ownership guidance.
 
 Do not hallucinate:
 - Do not invent constructors, helper methods, modules, trait impls, enum variants, imports, ownership transitions, or preconditions not supported by the context.
 - Do not use crate APIs that are not explicitly named in the context.
+- Do not assume enums, array elements, or selector values are `Copy` or `Clone` unless `Type Trait Facts` explicitly support that.
 - If a setup step is not factually supported, do not guess; prefer a smaller conservative harness or early return.
 """.strip()
 
@@ -67,6 +69,7 @@ Requirements:
 - Prefer `Related APIs` as the main construction pool.
 - Use `Known Reachable Paths` as fact-grounded reachability hints when helpful, but do not copy them mechanically.
 - Treat `Compile-Time Facts` as authoritative.
+- If `Type Trait Facts` do not explicitly say a type is `Copy` or `Clone`, do not assume by-value indexing, repeated reuse, or `.clone()` is valid for that type.
 - Make variants meaningfully different when the context supports it. Prefer diversity in setup path, input shaping, boundary selection, state progression, or recoverable error exploration.
 - If a more ambitious path is not factually supported, choose a smaller conservative path instead of guessing.
 - Keep all logic inside a normal Rust binary `fn main()`.

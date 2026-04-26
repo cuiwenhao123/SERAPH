@@ -116,6 +116,46 @@
 - **真实验证**：
   - `moonfire-ffmpeg` rerender 后：`related union = 70 / 70 = 100%`
 
+### 1.6 borrowed owner-bridge API 在 setup 截断时被隐藏：`camino::Utf8Path::components`
+
+- **crate / 阶段**：`camino`，Phase 2 检索 / Phase 3 真实 crate 验证
+- **现象**：
+  - target 为 `api::camino::Utf8Components::as_path` 时，旧 `Known Reachable Paths` 没有把 `api::camino::Utf8Path::components` 暴露出来
+  - 图里其实已经有 `Utf8Path --components()--> Utf8Components` 这条边，但最终上下文里看不到这个 bridge API
+- **Rust 特性**：
+  - Rust 常见 “borrowed owner -> view / iterator owner” 模式不会长得像普通 constructor
+  - 典型形态是 `&self -> Components<'_>`、`&self -> Iter<'_>` 这类 owner-bridge API
+  - 这类 API 对 reachability 很关键，但它们既不是根构造器，也不一定是深 producer chain 的最高分节点
+- **根因**：
+  - 旧实现的 setup 收集逻辑其实已经找到了 `Utf8Path::components`
+  - 但排序更偏向深层 producer-chain 项，`max_setup_apis=12` 截断后，`Utf8Path::components` 被挤出了可见窗口
+  - 所以问题不是“图里没有边”，而是“Rust owner-bridge 事实被 budget / truncation 吃掉了”
+- **工具修复**：
+  - setup entry 新增 `basis`：
+    - `producer_chain`
+    - `owner_bridge`
+  - 当 `Known Reachable Paths` 因 slot 限制截断时，优先保证至少把隐藏的 `owner_bridge` API surfacing 出来
+  - 这不是强迫 LLM 按固定 setup chain 逐步构造，而是把“真实可达的 Rust bridge API”作为 authoritative fact 暴露给模型，让它可以结合 target 与 related API 自主组合 honest harness
+- **能力提升**：
+  - Rust path/view/iterator 类 API 不再因为“不是最深 producer”而在 context 中消失
+  - 这减少了模型为了连通 target owner 而臆造 helper state 或假 bridge 调用的概率
+  - 对 Rust borrowed wrapper / iterator / view 风格 API 的真实 reachability 提示更稳定
+- **真实验证**：
+  - 旧 workspace：`/tmp/seraph-camino-phase3-20260426-163718`
+    - compile：`2 / 2 ok`
+    - smoke：`1 ok, 1 harness panic`
+    - 其中一个变体在空输入上对 `&data[1..]` 切片，runtime diagnosis 将其识别为 harness-side bug，而不是 target bug
+  - 新 workspace：`/tmp/seraph-camino-phase3-openai-20260426-170500`
+    - 使用 `SERAPH_EMBEDDING_BACKEND=openai_compatible`
+    - 新 context：`/tmp/seraph-camino-phase3-openai-20260426-170500/contexts/rag_target_001.md`
+    - `Known Reachable Paths` 现在明确包含：`api::camino::Utf8Path::components [basis=owner_bridge]`
+    - compile：`2 / 2 ok`
+    - smoke：`2 / 2 ok`
+  - **谨慎结论**：
+    - rerun 中确实观察到新上下文把关键 owner-bridge API 暴露出来了
+    - 同时也观察到第二个变体不再出现旧的空切片 panic
+    - 但这次 rerun 还同时切换到了真实 embedding backend，因此不应把 runtime 改善单独过度归因给某一个因素
+
 ## 2. Phase 3 中暴露的 Rust 专有编译问题
 
 ### 2.1 模块路径 / re-export 幻觉：`Dictionary` 不在 crate root
@@ -638,6 +678,7 @@
 
 - 本次尝试使用配置的 SiliconFlow embedding 服务时，`/embeddings` 请求返回 `401 Unauthorized`，因此 rerun 采用 `SERAPH_EMBEDDING_BACKEND=hashing` 完成真实验证。
 - 这属于部署/鉴权问题，不属于本次 `moonfire-ffmpeg` 工具逻辑修复本身。
+- 当前主线已经移除 `hashing` backend 支持；后续真实 crate 验证统一使用 `openai_compatible` embedding 路径。
 
 ## 7. 2026-04-25 `bytes` 真实 Phase 3 验证：public path / unsafe 签名渲染
 
@@ -830,7 +871,212 @@
     - `UninitSlice::uninit`：compile `ok`，smoke `ok`
   - 说明这三个首轮 compile 缺陷已经从真实 `bytes` 流程中消失
   - 先前单次 rerun 里 `UninitSlice::new` 暴露过 runtime panic，但当前 fresh rerun 未复现，说明那一项更像是特定生成结果触发的运行时变体，而不是本次 compile 级 root-cause 修复失败
-  - 这轮修复再次说明：
-    - Rust trait target 不能只给名字，必须给 implementor
-    - Rust 的 `MaybeUninit` 不能一刀切地视为危险构造
-    - Rust borrow-check 规则需要按常见 API 形状写成更具体的生成约束
+- 这轮修复再次说明：
+  - Rust trait target 不能只给名字，必须给 implementor
+  - Rust 的 `MaybeUninit` 不能一刀切地视为危险构造
+  - Rust borrow-check 规则需要按常见 API 形状写成更具体的生成约束
+
+## 8. 2026-04-26 `tar-rs` 真实全量 Phase 1 -> smoke-run batch
+
+- **workspace**：`/tmp/seraph-tar-batch-openai-20260426-180739`
+- **输入配置**：
+  - target crate：`/tmp/seraph-phase2-new-crates/tar-rs/Cargo.toml`
+  - RAG embedding：`openai_compatible`
+  - Phase 3 LLM：本地 Responses 网关 `gpt-5.4`
+  - smoke seed：`/tmp/seraph-tar-seed-input.tar`
+- **target 总数**：`18`
+  - 主要集中在 `tar::header::*` 这一组 header/view/reinterpretation API
+- **总体结果**：
+  - target coverage：`18 / 18 = 100%`
+  - original variant compile：`51 / 54`
+  - fix-loop 成功修复：`3 / 3`
+  - compile-success + fixed variant smoke：`54 / 54`
+  - runtime issues：`0`
+  - `found_bugs = []`
+  - `needs_review = []`
+
+### 8.1 内层视图类型 helper API 幻觉：`&mut GnuSparseHeader` 并没有 `as_mut_bytes`
+
+- **出现位置**：
+  - `round 1`：`api::tar::header::GnuExtSparseHeader::new`
+  - `round 17`：`api::tar::header::GnuExtSparseHeader::as_bytes`
+- **现象**：
+  - 首轮 harness 在遍历 `hdr.sparse_mut()` 的条目后，直接写：
+    - `entry.as_mut_bytes()`
+  - `rustc` 报 `E0599`：
+    - `no method named 'as_mut_bytes' found for mutable reference '&mut GnuSparseHeader'`
+- **根因**：
+  - 这是首轮生成时的 API surface hallucination
+  - 模型把 owner `GnuExtSparseHeader` 暴露的字节视图能力，错误投射到了其内部 sparse entry 类型上
+- **修复方式**：
+  - fix-loop 第 1 次修复就收敛：
+    - `round 1` 直接删掉无效的 nested mutation，只保留 `GnuExtSparseHeader::new` 的真实 target 调用
+    - `round 17` 改为对 owner `hdr.as_mut_bytes()` 做字节填充，而不再调用不存在的 `entry.as_mut_bytes()`
+- **结论**：
+  - 这是一次被 `rustc` + fix-loop 成功拦截的 compile-facing API 幻觉
+  - 它更像普通 surface hallucination，而不是目前已经确认的 Rust 特有工具 root-cause bug
+
+### 8.2 临时值借用生命周期问题：`String::from_utf8_lossy(...).as_ref()` 触发 `E0716`
+
+- **出现位置**：
+  - `round 15`：`api::tar::header::UstarHeader::as_header`
+- **现象**：
+  - 首轮 harness 写出：
+    - `String::from_utf8_lossy(&data).as_ref()`
+  - 并把这个临时借用结果存进局部变量再传给 `set_path_absolute`
+  - `rustc` 报 `E0716`：
+    - `temporary value dropped while borrowed`
+- **Rust 特性**：
+  - 这是典型的 Rust 临时值生命周期 / 借用规则问题
+  - 语义上“看起来像一个 `&str`”并不代表它能越过临时值的语句边界安全存活
+- **修复方式**：
+  - fix-loop 第 1 次修复改成：
+    - `let abs_candidate_owned = String::from_utf8_lossy(&data).into_owned();`
+    - `ustar.set_path_absolute(abs_candidate_owned.as_str())`
+  - 即先把临时 `Cow<str>` 转成具名 owned `String`，再借出 `&str`
+- **结论**：
+  - 这是本轮最典型的 Rust 专有 compile issue
+  - 当前系统已经可以依靠 `rustc` 诊断 + fix-loop 在 1 次修复内稳定收敛
+  - 如果后续在别的 crate 上重复出现，可以考虑把这类“不要对 `from_utf8_lossy(...).as_ref()` 临时值跨语句借用”的规则上升到 prompt / fixer guidance
+
+### 8.3 本轮 batch 的整体含义
+
+- `tar-rs` 这轮没有暴露新的阻塞型工具 bug
+- 但它提供了两个很有价值的论文素材：
+  - Rust 编译器如何拦截“临时值生命周期”这种语言专有错误
+  - compiler-guided fix-loop 如何把首轮 surface hallucination 收敛到 honest harness
+- 相比 `camino` 的 owner-bridge 问题，`tar-rs` 更像是在说明：
+  - 当前系统对 header/view 类 crate 已经具备较稳定的端到端通过能力
+  - 剩余少量失败主要落在首轮生成细节，而不是 Phase 2 reachability / constructibility 的结构性缺口
+
+## 9. 2026-04-26 `snap7-rs` 真实 crate representative top-10 batch
+
+- **workspace**：`/tmp/seraph-snap7rs-top10-openai-20260426-183112`
+- **输入配置**：
+  - target crate：`/tmp/seraph-phase2-new-crates/snap7-rs/Cargo.toml`
+  - Phase 1/2 knowledge：`/tmp/seraph-snap7rs-phase12-20260426-182929/knowledge.json`
+  - RAG embedding：`openai_compatible`
+  - Phase 3 LLM：本地 Responses 网关
+- **Phase 1/2 预检查**：
+  - APIs：`124`
+  - types：`21`
+  - traits：`1`
+  - impls：`40`
+  - unsafe candidates：`124`
+- **批量策略说明**：
+  - 这次没有直接跑满全部 `124` 个 target
+  - 先选了一个更适合真实 smoke 的 representative top-10 batch，优先覆盖：
+    - `create`
+    - `get_param`
+    - `set_param`
+    - `event_text`
+  - 目的不是给出“全库最终覆盖率”，而是先看 SERAPH 在这个 PLC/FFI 风格 crate 上的首轮 through-rate，以及它会先暴露出什么 Rust 专有失败模式
+- **top-10 batch 结果**：
+  - validated：`8 / 10`
+  - attempted but exhausted：`2 / 10`
+  - exhausted targets：
+    - `api::snap7_rs::client::S7Client::set_param`
+    - `api::snap7_rs::server::S7Server::set_param`
+  - original variant compile：`23 / 30`
+  - fix-loop 成功修复：`5`
+  - fix-loop 失败：`2`
+  - smoke：`28 / 28`
+  - `found_bugs = []`
+  - `needs_review = []`
+
+### 9.1 non-`Copy` / non-`Clone` enum 所有权语义导致 `set_param` 系列 target 卡住
+
+- **出现位置**：
+  - `round 3`：`api::snap7_rs::client::S7Client::set_param`
+  - `round 7`：`api::snap7_rs::server::S7Server::set_param`
+- **现象**：
+  - `S7Client::set_param` 的失败变体从本地 `params` 数组里按索引取出多个 `InternalParam`
+  - `rustc` 直接报 `E0508`：
+    - `cannot move out of type '[InternalParam; 5]', a non-copy array`
+  - `S7Server::set_param` 的失败变体除了同样触发 `E0508`，还因为把 `param` 传给 helper 和 API 后重复使用，继续报 `E0382`：
+    - `use of moved value: 'param'`
+- **Rust 特性**：
+  - Rust 从数组索引中按值取元素时，会发生 move
+  - 如果元素类型不是 `Copy`，就不能像整数那样随手取出、复用、再多次传递
+  - 若 helper 参数按值接收该 enum，又会进一步放大 move / reuse 冲突
+- **库侧事实**：
+  - `snap7-rs` 的 `InternalParam` 在源码里只有：
+    - `#[derive(Debug)]`
+  - 没有 `Copy`
+  - 也没有 `Clone`
+  - 证据：`/tmp/seraph-phase2-new-crates/snap7-rs/src/model.rs:79`
+- **根因**：
+  - 首轮 harness 生成时，把 `InternalParam` 当成了“可像小整数一样自由复制的 selector enum”
+  - 这在 Rust 里并不成立，因为该 enum 没有 `Copy` / `Clone`
+  - `round 7` 里还叠加了另一个问题：
+    - helper `value_for_param(param, ...)` 以 owning 方式接收 `param`
+    - 后续 `get_param` / `set_param` 再使用同一个 `param` 时，立刻触发 move-after-use
+- **fix-loop 为什么没救回来**：
+  - 对 `round 3`，第 1 次修复直接把数组元素后面补 `.clone()`，导致 `E0599`
+    - `no method named 'clone' found for enum 'InternalParam'`
+  - 第 2 次修复把元素改成借用，但继续调用 `p1.clone()` / `p2.clone()` / `p3.clone()`
+  - 因为 `InternalParam` 不实现 `Clone`，这里实际 clone 的只是 `&InternalParam`，于是又触发 `E0308`
+    - `expected InternalParam, found &InternalParam`
+  - 对 `round 7`，两次 fix 也都停留在“借用后再 clone 引用”的错误恢复路径上，同样收敛到 `E0308`
+- **这说明的工具缺口**：
+  - 当前 fix-loop 还不够 Rust-aware：
+    - 遇到 non-`Copy` enum 的 move 问题时，会本能地建议 `.clone()`
+    - 但如果 context / compile facts 没明确告诉模型“该类型没有 `Clone`”，这个修复方向会继续漂移
+  - 当前 prompt 也缺少针对这类 selector-enum 的更具体约束：
+    - 不应默认通过“数组索引取值 + 多次复用”来组织调用
+    - 更稳的做法是：
+      - 用 `match`/分支直接在每个分支里构造并消费目标 enum
+      - 或者避免让 helper 取得该 enum 的所有权
+- **对工具设计的启发**：
+  - 在 extract / context 层补充“类型复制性事实”会很有价值，例如显式暴露：
+    - 是否实现 `Copy`
+    - 是否实现 `Clone`
+    - derive / trait facts
+  - 在 prompt / fixer guidance 中加入更具体的 Rust 规则：
+    - 对 enum / struct 参数，若没有明确 `Copy` 事实，不要默认从数组中按值索引取出后多次复用
+    - 如果 `rustc` 已提示该类型不实现 `Clone`，fix-loop 不要再生成 `.clone()` 路径
+    - 当 target 需要多次围绕同一 selector 组织调用时，优先把逻辑改写为单分支一次性消费，而不是保存并反复传递 owned 值
+- **已落地修复**：
+  - `Phase 2 / retrieve.py`
+    - `Compile-Time Facts` 新增 `Type Trait Facts`
+    - 对 target / setup 参数类型显式渲染：
+      - `Copy=yes|no`
+      - `Clone=yes|no`
+      - `other_explicit_impls=...`
+  - `Phase 3 / harness prompt`
+    - 明确要求：如果 `Type Trait Facts` 没有显式给出 `Copy` / `Clone`，不要假设数组元素、enum selector 或按值索引结果可以复用或 `.clone()`
+  - `Phase 3 / compile fixer bundle`
+    - 明确禁止：在 move error 恢复时，若 context 没有给出 `Clone` 事实，不要再盲目补 `.clone()`
+    - 明确鼓励：改写为 borrow-preserving、branch-local construction 或“一次性消费 owned 值”
+- **修复后真实 rerun**：
+  - client target workspace：`/tmp/seraph-snap7rs-rerun-client-setparam-20260426`
+    - target：`api::snap7_rs::client::S7Client::set_param`
+    - `Type Trait Facts` 现在明确包含：
+      - `snap7_rs::InternalParam [kind=enum]: Copy=no; Clone=no; other_explicit_impls=core::fmt::Debug`
+    - compile：`3 / 3 ok`
+    - fix-loop request：`0`
+    - smoke：`3 / 3 ok`
+    - 结果：`validated`
+  - server target workspace：`/tmp/seraph-snap7rs-rerun-server-setparam-20260426`
+    - target：`api::snap7_rs::server::S7Server::set_param`
+    - 同样出现：
+      - `snap7_rs::InternalParam [kind=enum]: Copy=no; Clone=no; other_explicit_impls=core::fmt::Debug`
+    - compile：`3 / 3 ok`
+    - fix-loop request：`0`
+    - smoke：`3 / 3 ok`
+    - 结果：`validated`
+- **修复效果解读**：
+  - 这次 rerun 的关键改观，不只是“fix-loop 更聪明了”，而是首轮 harness 就不再沿着错误的 ownership 假设走
+  - 生成结果改成了更 honest 的 Rust 形状：
+    - 通过 `match` / helper 直接构造 `InternalParam`
+    - 不再从数组中按值索引后复用
+    - 不再尝试对 non-`Clone` enum 调 `.clone()`
+- **结论**：
+  - `snap7-rs` 这轮没有暴露目标库 bug
+  - 但它非常清楚地暴露了一个 Rust 专有 harness 生成难点：
+    - “小型 selector enum 看起来像 Copy，但库并没有给出 Copy/Clone 语义”
+  - 这类问题不是普通语义检索不足，而是 Rust 所有权事实没有被充分结构化暴露给生成器和 fix-loop
+  - 因而它很适合作为论文中的一个语言特性案例：
+    - Rust type-trait facts 缺失
+    - 导致 LLM 首轮与修复轮都沿着错误的 ownership 假设前进
+    - 进而说明为什么 SERAPH 需要把 Rust 编译期事实进一步上升为 prompt / context 的显式约束

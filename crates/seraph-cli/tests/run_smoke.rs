@@ -1,8 +1,15 @@
 use serde_json::Value;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -22,6 +29,177 @@ fn temp_dir(name: &str) -> PathBuf {
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("create temp dir");
     path
+}
+
+struct FakeEmbeddingServer {
+    addr: SocketAddr,
+    shutdown: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl FakeEmbeddingServer {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake embedding server");
+        listener
+            .set_nonblocking(true)
+            .expect("configure fake embedding server");
+        let addr = listener.local_addr().expect("fake embedding addr");
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_flag = Arc::clone(&shutdown);
+        let thread = thread::spawn(move || loop {
+            if shutdown_flag.load(Ordering::Relaxed) {
+                break;
+            }
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    if shutdown_flag.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    handle_embedding_connection(stream);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("accept fake embedding request: {error}"),
+            }
+        });
+        Self {
+            addr,
+            shutdown,
+            thread: Some(thread),
+        }
+    }
+
+    fn base_url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+}
+
+impl Drop for FakeEmbeddingServer {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+        let _ = TcpStream::connect(self.addr);
+        if let Some(thread) = self.thread.take() {
+            thread.join().expect("join fake embedding server");
+        }
+    }
+}
+
+fn configure_embedding_env<'a>(
+    command: &'a mut Command,
+    server: &FakeEmbeddingServer,
+) -> &'a mut Command {
+    command
+        .env("SERAPH_EMBEDDING_BACKEND", "openai_compatible")
+        .env("SERAPH_EMBEDDING_BASE_URL", server.base_url())
+        .env("SERAPH_EMBEDDING_MODEL", "test-embedding-model")
+}
+
+fn handle_embedding_connection(mut stream: TcpStream) {
+    let mut buffer = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    let mut header_end = None;
+    let mut content_length = 0_usize;
+    loop {
+        let read = stream.read(&mut chunk).expect("read embedding request");
+        if read == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+        if header_end.is_none() {
+            header_end = find_header_end(&buffer);
+            if let Some(end) = header_end {
+                content_length = parse_content_length(&buffer[..end]);
+            }
+        }
+        if let Some(end) = header_end {
+            let body_start = end + 4;
+            if buffer.len() >= body_start + content_length {
+                let request: Value = serde_json::from_slice(
+                    &buffer[body_start..body_start + content_length],
+                )
+                .expect("parse embedding request body");
+                let inputs = request
+                    .get("input")
+                    .and_then(Value::as_array)
+                    .expect("embedding request inputs");
+                let response_body = serde_json::json!({
+                    "data": inputs
+                        .iter()
+                        .enumerate()
+                        .map(|(index, text)| {
+                            serde_json::json!({
+                                "index": index,
+                                "embedding": fake_embedding(text.as_str().unwrap_or("")),
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                })
+                .to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response_body.len(),
+                    response_body
+                )
+                .expect("write embedding response");
+                return;
+            }
+        }
+    }
+    panic!("incomplete embedding request");
+}
+
+fn find_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn parse_content_length(headers: &[u8]) -> usize {
+    for line in String::from_utf8_lossy(headers).lines() {
+        if line.to_ascii_lowercase().starts_with("content-length:") {
+            return line
+                .split_once(':')
+                .expect("content-length separator")
+                .1
+                .trim()
+                .parse()
+                .expect("content-length value");
+        }
+    }
+    0
+}
+
+fn fake_embedding(text: &str) -> Vec<f64> {
+    const DIMENSIONS: usize = 24;
+    let mut vector = vec![0.0_f64; DIMENSIONS];
+    let normalized = text
+        .to_lowercase()
+        .replace("::", " ")
+        .replace('(', " ")
+        .replace(')', " ");
+    let mut token_count = 0_usize;
+    for token in normalized.split_whitespace() {
+        token_count += 1;
+        let primary = project_token(token, DIMENSIONS);
+        let secondary = (primary + token.len()) % DIMENSIONS;
+        vector[primary] += 1.0;
+        vector[secondary] += 0.5;
+    }
+    if token_count == 0 {
+        vector[0] = 1.0;
+        return vector;
+    }
+    let norm = vector.iter().map(|value| value * value).sum::<f64>().sqrt();
+    vector.into_iter().map(|value| value / norm).collect()
+}
+
+fn project_token(token: &str, dimensions: usize) -> usize {
+    token
+        .chars()
+        .enumerate()
+        .map(|(index, ch)| (index + 1) * ch as usize)
+        .sum::<usize>()
+        % dimensions
 }
 
 fn write_batch_knowledge(path: &Path) {
@@ -205,6 +383,7 @@ fn write_batch_knowledge(path: &Path) {
 fn run_smoke_writes_validated_coverage_json() {
     let repo = repo_root();
     let workspace = temp_dir("run-smoke");
+    let embedding_server = FakeEmbeddingServer::start();
     let model_script = workspace.join("fake_model.py");
     fs::write(
         &model_script,
@@ -250,10 +429,11 @@ else:
     .expect("write model script");
 
     let binary = env!("CARGO_BIN_EXE_seraph-cli");
-    let output = Command::new(binary)
-        .current_dir(&repo)
-        .env("PYTHONPATH", repo.join("rag"))
-        .env("SERAPH_EMBEDDER", "hashing")
+    let mut command = Command::new(binary);
+    let output = configure_embedding_env(
+        command.current_dir(&repo).env("PYTHONPATH", repo.join("rag")),
+        &embedding_server,
+    )
         .args([
             "run",
             "--knowledge",
@@ -287,6 +467,7 @@ else:
 fn run_executes_all_targets_by_default() {
     let repo = repo_root();
     let workspace = temp_dir("run-batch-all-targets");
+    let embedding_server = FakeEmbeddingServer::start();
     let knowledge_path = workspace.join("batch_knowledge.json");
     let model_script = workspace.join("fake_model.py");
     write_batch_knowledge(&knowledge_path);
@@ -334,10 +515,11 @@ else:
     .expect("write model script");
 
     let binary = env!("CARGO_BIN_EXE_seraph-cli");
-    let output = Command::new(binary)
-        .current_dir(&repo)
-        .env("PYTHONPATH", repo.join("rag"))
-        .env("SERAPH_EMBEDDER", "hashing")
+    let mut command = Command::new(binary);
+    let output = configure_embedding_env(
+        command.current_dir(&repo).env("PYTHONPATH", repo.join("rag")),
+        &embedding_server,
+    )
         .args([
             "run",
             "--knowledge",
@@ -396,6 +578,7 @@ else:
 fn run_pipeline_injects_pythonpath_for_python_subcli() {
     let repo = repo_root();
     let workspace = temp_dir("run-pythonpath");
+    let embedding_server = FakeEmbeddingServer::start();
     let model_script = workspace.join("fake_model.py");
     fs::write(
         &model_script,
@@ -408,10 +591,11 @@ print(f'fn main() {{ println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_
     .expect("write model script");
 
     let binary = env!("CARGO_BIN_EXE_seraph-cli");
-    let output = Command::new(binary)
-        .current_dir(&repo)
-        .env_remove("PYTHONPATH")
-        .env("SERAPH_EMBEDDER", "hashing")
+    let mut command = Command::new(binary);
+    let output = configure_embedding_env(
+        command.current_dir(&repo).env_remove("PYTHONPATH"),
+        &embedding_server,
+    )
         .args([
             "run",
             "--knowledge",
@@ -441,6 +625,7 @@ print(f'fn main() {{ println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_
 fn run_smoke_writes_found_bug_to_coverage_json() {
     let repo = repo_root();
     let workspace = temp_dir("run-smoke-bug");
+    let embedding_server = FakeEmbeddingServer::start();
     let model_script = workspace.join("fake_model.py");
     let runtime_script = workspace.join("fake_runtime.py");
     fs::write(
@@ -466,10 +651,11 @@ print(json.dumps({
     .expect("write runtime script");
 
     let binary = env!("CARGO_BIN_EXE_seraph-cli");
-    let output = Command::new(binary)
-        .current_dir(&repo)
-        .env("PYTHONPATH", repo.join("rag"))
-        .env("SERAPH_EMBEDDER", "hashing")
+    let mut command = Command::new(binary);
+    let output = configure_embedding_env(
+        command.current_dir(&repo).env("PYTHONPATH", repo.join("rag")),
+        &embedding_server,
+    )
         .args([
             "run",
             "--knowledge",
@@ -510,6 +696,7 @@ print(json.dumps({
 fn run_smoke_failure_still_writes_validated_coverage_and_runtime_error_index() {
     let repo = repo_root();
     let workspace = temp_dir("run-smoke-runtime-error");
+    let embedding_server = FakeEmbeddingServer::start();
     let model_script = workspace.join("fake_model.py");
     let runtime_script = workspace.join("fake_runtime.py");
     fs::write(
@@ -535,10 +722,11 @@ print(json.dumps({
     .expect("write runtime script");
 
     let binary = env!("CARGO_BIN_EXE_seraph-cli");
-    let output = Command::new(binary)
-        .current_dir(&repo)
-        .env("PYTHONPATH", repo.join("rag"))
-        .env("SERAPH_EMBEDDER", "hashing")
+    let mut command = Command::new(binary);
+    let output = configure_embedding_env(
+        command.current_dir(&repo).env("PYTHONPATH", repo.join("rag")),
+        &embedding_server,
+    )
         .args([
             "run",
             "--knowledge",
@@ -578,6 +766,7 @@ print(json.dumps({
 fn run_rerun_overwrites_previous_validated_coverage_with_latest_attempted_result() {
     let repo = repo_root();
     let workspace = temp_dir("run-rerun-overwrite");
+    let embedding_server = FakeEmbeddingServer::start();
     let model_script = workspace.join("fake_model.py");
     fs::write(
         &model_script,
@@ -590,10 +779,11 @@ print(f'fn main() {{ println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_
     .expect("write model script");
 
     let binary = env!("CARGO_BIN_EXE_seraph-cli");
-    let first = Command::new(binary)
-        .current_dir(&repo)
-        .env("PYTHONPATH", repo.join("rag"))
-        .env("SERAPH_EMBEDDER", "hashing")
+    let mut first_command = Command::new(binary);
+    let first = configure_embedding_env(
+        first_command.current_dir(&repo).env("PYTHONPATH", repo.join("rag")),
+        &embedding_server,
+    )
         .args([
             "run",
             "--knowledge",
@@ -617,10 +807,11 @@ print(f'fn main() {{ println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_
         String::from_utf8_lossy(&first.stderr)
     );
 
-    let second = Command::new(binary)
-        .current_dir(&repo)
-        .env("PYTHONPATH", repo.join("rag"))
-        .env("SERAPH_EMBEDDER", "hashing")
+    let mut second_command = Command::new(binary);
+    let second = configure_embedding_env(
+        second_command.current_dir(&repo).env("PYTHONPATH", repo.join("rag")),
+        &embedding_server,
+    )
         .args([
             "run",
             "--knowledge",
@@ -665,6 +856,7 @@ print(f'fn main() {{ println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_
 fn run_fix_loop_smokes_successful_fixed_harnesses() {
     let repo = repo_root();
     let workspace = temp_dir("run-smoke-fixed");
+    let embedding_server = FakeEmbeddingServer::start();
     let model_script = workspace.join("fake_model.py");
     let compile_script = workspace.join("fake_compile.py");
     let smoke_script = workspace.join("fake_smoke.py");
@@ -721,10 +913,11 @@ print(path.name)
     .expect("write smoke script");
 
     let binary = env!("CARGO_BIN_EXE_seraph-cli");
-    let output = Command::new(binary)
-        .current_dir(&repo)
-        .env("PYTHONPATH", repo.join("rag"))
-        .env("SERAPH_EMBEDDER", "hashing")
+    let mut command = Command::new(binary);
+    let output = configure_embedding_env(
+        command.current_dir(&repo).env("PYTHONPATH", repo.join("rag")),
+        &embedding_server,
+    )
         .args([
             "run",
             "--knowledge",
@@ -771,6 +964,7 @@ print(path.name)
 fn run_afl_bootstrap_build_only_prefers_successful_fixed_harness() {
     let repo = repo_root();
     let workspace = temp_dir("run-afl-bootstrap-fixed");
+    let embedding_server = FakeEmbeddingServer::start();
     let model_script = workspace.join("fake_model.py");
     let compile_script = workspace.join("fake_compile.py");
     let smoke_script = workspace.join("fake_smoke.py");
@@ -859,10 +1053,11 @@ print(binary)
     .expect("write fake cargo afl script");
 
     let binary = env!("CARGO_BIN_EXE_seraph-cli");
-    let output = Command::new(binary)
-        .current_dir(&repo)
-        .env("PYTHONPATH", repo.join("rag"))
-        .env("SERAPH_EMBEDDER", "hashing")
+    let mut command = Command::new(binary);
+    let output = configure_embedding_env(
+        command.current_dir(&repo).env("PYTHONPATH", repo.join("rag")),
+        &embedding_server,
+    )
         .env(
             "SERAPH_CARGO_AFL_COMMAND",
             format!("python3 {}", cargo_afl_script.display()),
