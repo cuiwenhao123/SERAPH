@@ -2,6 +2,17 @@ import json
 
 from seraph_rag.fix_loop import run_fix_loop, run_fix_loops
 
+VALID_FIXED_DANGER_SOURCE = """fn danger() {}
+
+fn main() {
+    println!("SERAPH_STEP_ENTER:1:api::fixture::danger");
+    danger();
+    println!("SERAPH_STEP_OK:1:api::fixture::danger");
+}
+"""
+
+VALID_FIXED_DANGER_RESPONSE = f"```rust\n{VALID_FIXED_DANGER_SOURCE}```"
+
 
 def test_run_fix_loop_stops_after_first_success(tmp_path):
     request_path = tmp_path / "fix_request_004_02.json"
@@ -15,7 +26,7 @@ def test_run_fix_loop_stops_after_first_success(tmp_path):
     responses_dir.mkdir()
     for attempt in (1, 2, 3):
         (responses_dir / "fix_response_004_02_{:02d}.md".format(attempt)).write_text(
-            '```rust\nfn main() { println!("SERAPH_STEP_ENTER:1:api::fixture::danger"); println!("SERAPH_STEP_OK:1:api::fixture::danger"); }\n```',
+            VALID_FIXED_DANGER_RESPONSE,
             encoding="utf-8",
         )
 
@@ -49,7 +60,7 @@ def test_run_fix_loop_reports_missing_next_response(tmp_path):
     )
     responses_dir.mkdir()
     (responses_dir / "fix_response_005_01_01.md").write_text(
-        '```rust\nfn main() { println!("SERAPH_STEP_ENTER:1:api::fixture::danger"); println!("SERAPH_STEP_OK:1:api::fixture::danger"); }\n```',
+        VALID_FIXED_DANGER_RESPONSE,
         encoding="utf-8",
     )
 
@@ -88,7 +99,7 @@ def test_run_fix_loops_writes_batch_index(tmp_path):
         encoding="utf-8",
     )
     (responses_dir / "fix_response_008_01_01.md").write_text(
-        '```rust\nfn main() { println!("SERAPH_STEP_ENTER:1:api::fixture::danger"); println!("SERAPH_STEP_OK:1:api::fixture::danger"); }\n```',
+        VALID_FIXED_DANGER_RESPONSE,
         encoding="utf-8",
     )
 
@@ -129,7 +140,7 @@ def test_run_fix_loop_generates_missing_response_with_command_template(tmp_path)
         report_dir,
         max_attempts=1,
         command_template="python3 -c 'import sys; sys.exit(0)'",
-        response_command_template="python3 -c \"print('fn main() { println!(\\\"SERAPH_STEP_ENTER:1:api::fixture::danger\\\"); println!(\\\"SERAPH_STEP_OK:1:api::fixture::danger\\\"); }')\"",
+        response_command_template=f'python3 -c "print({VALID_FIXED_DANGER_SOURCE!r})"',
     )
 
     assert result["status"] == "ok"

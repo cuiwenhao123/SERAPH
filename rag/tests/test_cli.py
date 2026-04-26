@@ -8,6 +8,15 @@ from seraph_rag.retrieve import rank_unsafe_targets
 from seraph_rag.vector_index import index_knowledge
 
 FIXTURE = Path(__file__).parent / "fixtures" / "minimal_knowledge.json"
+VALID_FIXED_DANGER_SOURCE = """fn danger() {}
+
+fn main() {
+    println!("SERAPH_STEP_ENTER:1:api::fixture::danger");
+    danger();
+    println!("SERAPH_STEP_OK:1:api::fixture::danger");
+}
+"""
+VALID_FIXED_DANGER_RESPONSE = f"```rust\n{VALID_FIXED_DANGER_SOURCE}```"
 
 
 def test_cli_graph_targets_and_retrieve(tmp_path, capsys):
@@ -354,7 +363,7 @@ def test_cli_fix_once_writes_fixed_compile_report(tmp_path):
         encoding="utf-8",
     )
     response_path.write_text(
-        '```rust\nfn main() { println!("SERAPH_STEP_ENTER:1:api::fixture::danger"); println!("SERAPH_STEP_OK:1:api::fixture::danger"); }\n```',
+        VALID_FIXED_DANGER_RESPONSE,
         encoding="utf-8",
     )
 
@@ -389,11 +398,11 @@ def test_cli_fix_loop_stops_after_first_success(tmp_path):
     )
     responses_dir.mkdir()
     (responses_dir / "fix_response_007_01_01.md").write_text(
-        '```rust\nfn main() { println!("SERAPH_STEP_ENTER:1:api::fixture::danger"); println!("SERAPH_STEP_OK:1:api::fixture::danger"); }\n```',
+        VALID_FIXED_DANGER_RESPONSE,
         encoding="utf-8",
     )
     (responses_dir / "fix_response_007_01_02.md").write_text(
-        '```rust\nfn main() { println!("SERAPH_STEP_ENTER:1:api::fixture::danger"); println!("SERAPH_STEP_OK:1:api::fixture::danger"); }\n```',
+        VALID_FIXED_DANGER_RESPONSE,
         encoding="utf-8",
     )
 
@@ -431,7 +440,7 @@ def test_cli_fix_loop_batch_writes_index(tmp_path):
         encoding="utf-8",
     )
     (responses_dir / "fix_response_010_01_01.md").write_text(
-        '```rust\nfn main() { println!("SERAPH_STEP_ENTER:1:api::fixture::danger"); println!("SERAPH_STEP_OK:1:api::fixture::danger"); }\n```',
+        VALID_FIXED_DANGER_RESPONSE,
         encoding="utf-8",
     )
 

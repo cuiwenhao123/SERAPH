@@ -2,6 +2,17 @@ import json
 
 from seraph_rag.fix_once import run_fix_once
 
+VALID_FIXED_DANGER_SOURCE = """fn danger() {}
+
+fn main() {
+    println!("SERAPH_STEP_ENTER:1:api::fixture::danger");
+    danger();
+    println!("SERAPH_STEP_OK:1:api::fixture::danger");
+}
+"""
+
+VALID_FIXED_DANGER_RESPONSE = f"```rust\n{VALID_FIXED_DANGER_SOURCE}```"
+
 
 def test_run_fix_once_writes_fixed_harness_and_compile_report(tmp_path):
     request_path = tmp_path / "fix_request_004_02.json"
@@ -13,7 +24,7 @@ def test_run_fix_once_writes_fixed_harness_and_compile_report(tmp_path):
         encoding="utf-8",
     )
     response_path.write_text(
-        '```rust\nfn main() { println!("SERAPH_STEP_ENTER:1:api::fixture::danger"); println!("SERAPH_STEP_OK:1:api::fixture::danger"); }\n```',
+        VALID_FIXED_DANGER_RESPONSE,
         encoding="utf-8",
     )
 
