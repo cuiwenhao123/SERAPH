@@ -211,6 +211,11 @@ def _render_context_markdown_unbudgeted(
         type_index,
         max_related_apis=max_related_apis,
     )
+    variant_opportunities = _collect_variant_opportunities(
+        target_api,
+        setup_entries[:max_setup_apis],
+        related_apis,
+    )
     lines = [
         "# SERAPH Rust Harness Context",
         "",
@@ -247,13 +252,7 @@ def _render_context_markdown_unbudgeted(
                 entry["upstream_depth"],
             )
         )
-    if (
-        compile_hints["imports"]
-        or compile_hints["traits"]
-        or compile_hints["trait_methods"]
-        or compile_hints["enums"]
-    ):
-        lines.extend(["", "## Compile-Time Facts"])
+    lines.extend(["", "## Compile-Time Facts"])
     if compile_hints["imports"]:
         lines.extend(["### Exact Import Paths"])
         for item in compile_hints["imports"]:
@@ -308,6 +307,18 @@ def _render_context_markdown_unbudgeted(
                 _related_api_role(api, target_api),
             )
         )
+    lines.extend(["", "## Variant Opportunities", "### Setup Choices"])
+    for item in variant_opportunities["setup"]:
+        lines.append("- {}".format(item))
+    lines.extend(["", "### Input Shaping Choices"])
+    for item in variant_opportunities["input"]:
+        lines.append("- {}".format(item))
+    lines.extend(["", "### State Progression Choices"])
+    for item in variant_opportunities["state"]:
+        lines.append("- {}".format(item))
+    lines.extend(["", "### Boundary Choices"])
+    for item in variant_opportunities["boundary"]:
+        lines.append("- {}".format(item))
     lines.extend(["", "## Similar API Usage"])
     target_path = target_api.get("canonical_path", target.api_id)
     excluded_paths = {
@@ -603,6 +614,7 @@ def _fit_context_budget(markdown: str, max_context_chars: int) -> str:
     compression_order = [
         "## Similar API Usage",
         "## Rust Idioms",
+        "## Variant Opportunities",
         "## Related APIs",
         "## Compile-Time Facts",
         "## Known Reachable Paths",
@@ -877,6 +889,60 @@ def _collect_compile_hints(
         "traits": traits,
         "trait_methods": trait_methods,
         "enums": enums,
+    }
+
+
+def _collect_variant_opportunities(
+    target_api: Dict[str, Any],
+    setup_entries: List[Dict[str, Any]],
+    related_apis: List[Dict[str, Any]],
+) -> Dict[str, List[str]]:
+    setup_choices = [
+        "{} via {}".format(_api_display_path(entry["api"]), ", ".join(entry["produced_types"]))
+        for entry in setup_entries[:3]
+        if entry["produced_types"]
+    ]
+
+    arg_types = [str(arg_type) for arg_type in target_api.get("arg_types", [])]
+    has_byte_like_arg = any("[u8]" in arg_type or "Vec<u8>" in arg_type or "str" in arg_type for arg_type in arg_types)
+    has_numeric_arg = any("usize" in arg_type or "u32" in arg_type or "u64" in arg_type for arg_type in arg_types)
+
+    input_choices: List[str] = []
+    if has_byte_like_arg:
+        input_choices.extend(
+            [
+                "feed raw stdin bytes directly into byte-oriented arguments",
+                "use a bounded prefix of the fuzz input for shorter boundary-oriented calls",
+            ]
+        )
+    if has_numeric_arg:
+        input_choices.extend(
+            [
+                "derive small numeric boundary values from the fuzz input",
+                "clamp numeric values to public-length or capacity bounds before the target call",
+            ]
+        )
+
+    state_choices = [
+        "call the target immediately after minimal setup",
+    ]
+    if any(api.get("receiver") in {"&mut Self", "&mut self"} for api in related_apis):
+        state_choices.append("apply one public mutator before calling the target")
+
+    boundary_choices = [
+        "prefer documented recoverable boundaries over invented invalid states",
+    ]
+    if has_byte_like_arg:
+        boundary_choices.insert(
+            0,
+            "exercise empty or one-byte inputs when the target accepts externally supplied bytes",
+        )
+
+    return {
+        "setup": list(dict.fromkeys(setup_choices))[:3],
+        "input": list(dict.fromkeys(input_choices))[:3],
+        "state": list(dict.fromkeys(state_choices))[:3],
+        "boundary": list(dict.fromkeys(boundary_choices))[:3],
     }
 
 

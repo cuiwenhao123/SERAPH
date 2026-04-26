@@ -36,6 +36,18 @@ def test_render_context_markdown_uses_redesigned_sections():
     assert "## Generation Rules" not in markdown
 
 
+def test_render_context_markdown_surfaces_variant_opportunities():
+    knowledge = load_knowledge(FIXTURE)
+    graph = build_graph(knowledge)
+    target = rank_unsafe_targets(graph)[0]
+
+    markdown = render_context_markdown(knowledge, graph, target)
+
+    assert "## Variant Opportunities" in markdown
+    assert "### Setup Choices" in markdown
+    assert "### Input Shaping Choices" in markdown
+
+
 def test_render_context_markdown_surfaces_compile_critical_import_trait_and_enum_facts():
     knowledge = {
         "crate_meta": {"crate_import_name": "fixture"},
