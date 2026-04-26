@@ -8,7 +8,7 @@ from seraph_rag.vector_index import index_knowledge
 FIXTURE = Path(__file__).parent / "fixtures" / "minimal_knowledge.json"
 
 
-def test_render_context_from_stores_dedupes_target_and_honors_budget(tmp_path):
+def test_render_context_from_stores_dedupes_target_from_similar_usage(tmp_path):
     vectordb = tmp_path / "vectordb"
     graph_path = tmp_path / "graph.pkl"
     knowledge = load_knowledge(FIXTURE)
@@ -19,13 +19,53 @@ def test_render_context_from_stores_dedupes_target_and_honors_budget(tmp_path):
         knowledge,
         vectordb,
         graph_path,
-        max_context_chars=900,
+        max_context_chars=1250,
     )
 
-    similar_section = markdown.split("## Semantically Similar API Docs", 1)[1].split(
+    similar_section = markdown.split("## Similar API Usage", 1)[1].split(
         "## Rust Idioms", 1
     )[0]
+
+    assert "- [Section truncated to fit budget]" not in similar_section
     assert "fixture_crate::Buffer::get_unchecked" not in similar_section
-    assert len(markdown) <= 900
-    assert "## Generation Rules" in markdown
-    assert "SERAPH_STEP_OK" in markdown
+    assert len(markdown) <= 1250
+    assert "## Generation Rules" not in markdown
+
+
+def test_render_context_from_stores_honors_budget_truncation_order(tmp_path):
+    vectordb = tmp_path / "vectordb"
+    graph_path = tmp_path / "graph.pkl"
+    knowledge = load_knowledge(FIXTURE)
+    index_knowledge(knowledge, vectordb)
+    write_graph(build_graph(knowledge), graph_path)
+
+    markdown = render_context_from_stores(
+        knowledge,
+        vectordb,
+        graph_path,
+        max_context_chars=1000,
+    )
+
+    reachable_section = markdown.split("## Known Reachable Paths", 1)[1].split(
+        "## Compile-Time Facts", 1
+    )[0]
+    variant_section = markdown.split("## Variant Opportunities", 1)[1].split(
+        "## Similar API Usage", 1
+    )[0]
+    related_section = markdown.split("## Related APIs", 1)[1].split(
+        "## Variant Opportunities", 1
+    )[0]
+    compile_section = markdown.split("## Compile-Time Facts", 1)[1].split(
+        "## Related APIs", 1
+    )[0]
+    similar_section = markdown.split("## Similar API Usage", 1)[1].split(
+        "## Rust Idioms", 1
+    )[0]
+    assert "- [Section truncated to fit budget]" in reachable_section
+    assert "- [Section truncated to fit budget]" in variant_section
+    assert "- [Section truncated to fit budget]" in similar_section
+    assert "- [Section truncated to fit budget]" in markdown.split("## Rust Idioms", 1)[1]
+    assert "- [Section truncated to fit budget]" in related_section
+    assert "- [Section truncated to fit budget]" not in compile_section
+    assert len(markdown) <= 1000
+    assert "## Generation Rules" not in markdown

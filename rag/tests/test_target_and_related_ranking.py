@@ -181,7 +181,7 @@ def test_render_context_markdown_includes_other_target_apis_as_related_companion
 
     markdown = render_context_markdown(knowledge, graph, target, max_related_apis=6)
 
-    related = markdown.split("## Related APIs", 1)[1].split("## Semantically Similar API Docs", 1)[0]
+    related = markdown.split("## Related APIs", 1)[1].split("## Similar API Usage", 1)[0]
     assert "companion_fixture::Session::helper" in related
     assert "companion_fixture::Ffmpeg::new" in related
     assert "companion_fixture::util::Error::eof" in related
@@ -369,7 +369,7 @@ def setup_chain_knowledge():
     }
 
 
-def test_render_context_markdown_surfaces_required_setup_chain_by_default():
+def test_render_context_markdown_surfaces_known_reachable_paths_by_default():
     knowledge = setup_chain_knowledge()
     graph = build_graph(knowledge)
     target = next(
@@ -380,11 +380,11 @@ def test_render_context_markdown_surfaces_required_setup_chain_by_default():
 
     markdown = render_context_markdown(knowledge, graph, target)
 
-    required = markdown.split("## Required Setup APIs", 1)[1].split("## Related APIs", 1)[0]
-    assert "InputCodecParameters::new_decoder" in required
-    assert "InputStream::codecpar" in required
-    assert "InputFormatContext::read_frame" in required
-    assert required.index("InputStream::codecpar") < required.index("InputCodecParameters::new_decoder")
+    reachable = markdown.split("## Known Reachable Paths", 1)[1].split("## Related APIs", 1)[0]
+    assert "InputCodecParameters::new_decoder" in reachable
+    assert "InputStream::codecpar" in reachable
+    assert "InputFormatContext::read_frame" in reachable
+    assert reachable.index("InputStream::codecpar") < reachable.index("InputCodecParameters::new_decoder")
 
 
 def deref_setup_knowledge():
@@ -467,7 +467,7 @@ def test_render_context_uses_deref_wrapper_producer_for_target_owner_type():
 
     markdown = render_context_markdown(knowledge, graph, target)
 
-    required = markdown.split("## Required Setup APIs", 1)[1].split("## Related APIs", 1)[0]
+    required = markdown.split("## Known Reachable Paths", 1)[1].split("## Related APIs", 1)[0]
     assert "Source::make_wrapper" in required
 
 

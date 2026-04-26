@@ -211,21 +211,40 @@ def _render_context_markdown_unbudgeted(
         type_index,
         max_related_apis=max_related_apis,
     )
+    variant_opportunities = _collect_variant_opportunities(
+        target_api,
+        setup_entries[:max_setup_apis],
+        related_apis,
+    )
     lines = [
-        "# SERAPH RAG Harness Context",
+        "# SERAPH Rust Harness Context",
+        "",
+        "## Crate Facts",
+        "- crate_name: {}".format(knowledge["crate_meta"].get("crate_name", crate_import_name)),
+        "- crate_import_name: {}".format(crate_import_name),
+        "- target_crate_kind: library",
         "",
         "## Target API",
         "- api_id: {}".format(target.api_id),
         "- path: {}".format(_api_display_path(target_api)),
         "- signature: {}".format(_api_signature_display(target_api)),
-        "- safety: {}".format((target_api.get("doc_sections") or {}).get("safety", "")),
+        "- target_kind: {}".format(target_api.get("api_kind", "")),
+        "- owner_type: {}".format(_type_display_name(type_index.get(target_api.get("owner_type_id")), "")),
+        "- owner_trait: {}".format(
+            _trait_display_name(trait_index.get(target_api.get("owner_trait_id")), graph, "")
+        ),
+        "- receiver: {}".format(target_api.get("receiver", "")),
+        "- return_shape: {}".format(target_api.get("return_type", "")),
+        "- safety_summary: {}".format((target_api.get("doc_sections") or {}).get("safety", "")),
+        "- errors_summary: {}".format((target_api.get("doc_sections") or {}).get("errors", "")),
+        "- panics_summary: {}".format((target_api.get("doc_sections") or {}).get("panics", "")),
         "",
-        "## Required Setup APIs",
+        "## Known Reachable Paths",
     ]
     for entry in setup_entries[:max_setup_apis]:
         api = entry["api"]
         lines.append(
-            "- {}: {} — {} [setup={} depth={}]".format(
+            "- {}: {} — {} [goal=reach_target basis=producer_chain produces={} depth={}]".format(
                 api["api_id"],
                 _api_display_path(api),
                 _api_signature_display(api),
@@ -233,8 +252,9 @@ def _render_context_markdown_unbudgeted(
                 entry["upstream_depth"],
             )
         )
+    lines.extend(["", "## Compile-Time Facts"])
     if compile_hints["imports"]:
-        lines.extend(["", "## Exact Import Paths"])
+        lines.extend(["### Exact Import Paths"])
         for item in compile_hints["imports"]:
             lines.append(
                 "- {} => {} [kind={}]".format(
@@ -244,7 +264,7 @@ def _render_context_markdown_unbudgeted(
                 )
             )
     if compile_hints["traits"]:
-        lines.extend(["", "## Required Traits"])
+        lines.extend(["", "### Required Traits"])
         for item in compile_hints["traits"]:
             lines.append(
                 "- {}: required_methods={}; provided_methods={}".format(
@@ -254,7 +274,7 @@ def _render_context_markdown_unbudgeted(
                 )
             )
     if compile_hints["trait_methods"]:
-        lines.extend(["", "## Trait Method Signatures"])
+        lines.extend(["", "### Trait Method Signatures"])
         for item in compile_hints["trait_methods"]:
             lines.append(
                 "- {}: {} [{}]".format(
@@ -264,7 +284,7 @@ def _render_context_markdown_unbudgeted(
                 )
             )
     if compile_hints["enums"]:
-        lines.extend(["", "## Enum Variants"])
+        lines.extend(["", "### Enum Variants"])
         for item in compile_hints["enums"]:
             suffix = " [non_exhaustive]" if item["is_non_exhaustive"] else ""
             lines.append(
@@ -287,7 +307,19 @@ def _render_context_markdown_unbudgeted(
                 _related_api_role(api, target_api),
             )
         )
-    lines.extend(["", "## Semantically Similar API Docs"])
+    lines.extend(["", "## Variant Opportunities", "### Setup Choices"])
+    for item in variant_opportunities["setup"]:
+        lines.append("- {}".format(item))
+    lines.extend(["", "### Input Shaping Choices"])
+    for item in variant_opportunities["input"]:
+        lines.append("- {}".format(item))
+    lines.extend(["", "### State Progression Choices"])
+    for item in variant_opportunities["state"]:
+        lines.append("- {}".format(item))
+    lines.extend(["", "### Boundary Choices"])
+    for item in variant_opportunities["boundary"]:
+        lines.append("- {}".format(item))
+    lines.extend(["", "## Similar API Usage"])
     target_path = target_api.get("canonical_path", target.api_id)
     excluded_paths = {
         target_path,
@@ -306,30 +338,6 @@ def _render_context_markdown_unbudgeted(
     lines.extend(["", "## Rust Idioms"])
     for idiom in idioms[:max_idioms]:
         lines.append("- {}".format(idiom))
-    lines.extend(
-        [
-            "",
-            "## Generation Rules",
-            "- Use crate import name `{}`.".format(crate_import_name),
-            "- Call the target API in every harness variant.",
-            "- Emit `SERAPH_STEP_ENTER:<step_no>:<api_id>` before each targeted API call.",
-            "- Emit `SERAPH_STEP_OK:<step_no>:<api_id>` after successful return.",
-            "- Use early return for recoverable `Result` and `Option` paths.",
-            "- Use exact canonical module paths from `Exact Import Paths`; do not shorten imports unless that exact path is listed.",
-            "- If you implement a trait from `Required Traits`, implement every listed required method.",
-            "- If you override a trait method from `Trait Method Signatures`, copy the exact implementation-ready signature shown there.",
-            "- For trait-method targets with a `Self` receiver, call the target on a concrete implementor surfaced by `Required Setup APIs`, `Exact Import Paths`, or `Required Traits`; do not assume similarly named wrapper types implement the trait.",
-            "- If you match an enum from `Enum Variants`, cover every listed variant unless it is marked non-exhaustive.",
-            "- Do not create typed function-pointer bindings, `std::mem::size_of` placeholders, `PhantomData`, or dead helper functions merely to reference APIs or lifetime-bearing types.",
-            "- Before creating an `&mut` borrow, mutable slice view, or wrapper over an owner value, first compute any indexes, lengths, cloned source buffers, or read-only bytes you still need from that owner.",
-            "- After creating an `&mut` borrow into a value, do not read, slice, or immutably borrow the original owner again until that mutable borrow is no longer used.",
-            "- For constructors or adapters like `Type::new(owner.as_mut_slice())` that return an `&mut` wrapper, compute lengths, indexes, and any source bytes before the call, and do not read `owner` again until that wrapper is no longer used.",
-            "- Do not use `std::process::exit`, `panic!`, `unreachable!`, `todo!`, or `unimplemented!` inside placeholder helpers to fabricate missing values or references.",
-            "- Do not use `MaybeUninit`, `mem::zeroed`, `transmute`, `Box::into_raw`, or similar unsafe initialization tricks to fabricate missing target state unless the target or setup signatures explicitly require them.",
-            "- Do not use `target_lib` as a crate name.",
-            "",
-        ]
-    )
     return "\n".join(lines)
 
 
@@ -604,14 +612,14 @@ def _fit_context_budget(markdown: str, max_context_chars: int) -> str:
         return markdown[:max_context_chars]
 
     compression_order = [
-        "## Semantically Similar API Docs",
+        "## Similar API Usage",
         "## Rust Idioms",
+        "## Variant Opportunities",
         "## Related APIs",
-        "## Enum Variants",
-        "## Required Traits",
-        "## Exact Import Paths",
-        "## Required Setup APIs",
+        "## Known Reachable Paths",
+        "## Compile-Time Facts",
         "## Target API",
+        "## Crate Facts",
     ]
     compact = _render_markdown_sections(title, sections)
     for header in compression_order:
@@ -884,6 +892,59 @@ def _collect_compile_hints(
     }
 
 
+def _collect_variant_opportunities(
+    target_api: Dict[str, Any],
+    setup_entries: List[Dict[str, Any]],
+    related_apis: List[Dict[str, Any]],
+) -> Dict[str, List[str]]:
+    setup_choices = [
+        "setup API {} produces {}".format(
+            _api_display_path(entry["api"]),
+            ", ".join(entry["produced_types"]),
+        )
+        for entry in setup_entries[:3]
+        if entry["produced_types"]
+    ]
+
+    input_choices = [
+        "target signature includes argument type {}".format(arg_type)
+        for arg_type in _target_argument_types(target_api)
+    ]
+
+    target_owner_type_id = target_api.get("owner_type_id")
+    state_choices = [
+        "same-owner mutator surfaced in related APIs: {}".format(_api_display_path(api))
+        for api in related_apis
+        if api.get("receiver") in {"&mut Self", "&mut self"}
+        and target_owner_type_id
+        and api.get("owner_type_id") == target_owner_type_id
+    ]
+    if not state_choices:
+        state_choices = ["no same-owner mutator surfaced in related APIs"]
+
+    boundary_choices: List[str] = []
+    doc_sections = target_api.get("doc_sections") or {}
+    if doc_sections.get("safety"):
+        boundary_choices.append(
+            "documented safety precondition: {}".format(_one_line(str(doc_sections["safety"])))
+        )
+    if doc_sections.get("errors"):
+        boundary_choices.append(
+            "documented error condition: {}".format(_one_line(str(doc_sections["errors"])))
+        )
+    if doc_sections.get("panics"):
+        boundary_choices.append(
+            "documented panic condition: {}".format(_one_line(str(doc_sections["panics"])))
+        )
+
+    return {
+        "setup": list(dict.fromkeys(setup_choices))[:3],
+        "input": list(dict.fromkeys(input_choices))[:3],
+        "state": list(dict.fromkeys(state_choices))[:3],
+        "boundary": list(dict.fromkeys(boundary_choices))[:3],
+    }
+
+
 def _graph_neighbor_ids(graph: nx.Graph, node_id: str, edge_kind: str) -> List[str]:
     if not graph.has_node(node_id):
         return []
@@ -969,6 +1030,65 @@ def _api_signature_display(api: Dict[str, Any]) -> str:
     if re.match(r"^(?:pub\s+)?unsafe\b", signature):
         return signature
     return signature.replace("fn ", "unsafe fn ", 1)
+
+
+def _target_argument_types(api: Dict[str, Any]) -> List[str]:
+    structured_arg_types = [str(arg_type).strip() for arg_type in (api.get("arg_types") or []) if str(arg_type).strip()]
+    if structured_arg_types:
+        return structured_arg_types
+
+    signature = str(api.get("signature") or api.get("signature_text") or "").strip()
+    if not signature or "(" not in signature:
+        return []
+
+    start = signature.find("(")
+    depth = 0
+    end = -1
+    for index in range(start, len(signature)):
+        char = signature[index]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                end = index
+                break
+    if end == -1:
+        return []
+
+    args_block = signature[start + 1 : end].strip()
+    if not args_block:
+        return []
+
+    args: List[str] = []
+    current: List[str] = []
+    nested_depth = 0
+    for char in args_block:
+        if char == "," and nested_depth == 0:
+            arg = "".join(current).strip()
+            if arg:
+                args.append(arg)
+            current = []
+            continue
+        current.append(char)
+        if char in "(<[":
+            nested_depth += 1
+        elif char in ")>]":
+            nested_depth = max(0, nested_depth - 1)
+    tail = "".join(current).strip()
+    if tail:
+        args.append(tail)
+
+    extracted = []
+    for arg in args:
+        normalized = arg.strip()
+        if normalized in {"self", "&self", "&mut self"}:
+            continue
+        if ":" in normalized:
+            normalized = normalized.split(":", 1)[1].strip()
+        if normalized:
+            extracted.append(normalized)
+    return extracted
 
 
 def _trait_method_impl_signature(api: Dict[str, Any]) -> str:

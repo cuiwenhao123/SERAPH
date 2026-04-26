@@ -15,7 +15,7 @@ def test_rank_unsafe_targets_returns_only_unsafe_api():
     assert targets[0].score > 0
 
 
-def test_render_context_markdown_contains_codegen_rules():
+def test_render_context_markdown_uses_redesigned_sections():
     knowledge = load_knowledge(FIXTURE)
     graph = build_graph(knowledge)
     target = rank_unsafe_targets(graph)[0]
@@ -25,15 +25,39 @@ def test_render_context_markdown_contains_codegen_rules():
         target,
         idioms=["Handle Result with early return."],
     )
-    assert "# SERAPH RAG Harness Context" in markdown
-    assert "fixture_crate::Buffer::get_unchecked" in markdown
-    assert "fixture_crate::Buffer::new" in markdown
-    assert "SERAPH_STEP_ENTER" in markdown
-    assert "fixture_crate" in markdown
-    assert "implementation-ready signature" in markdown
-    assert "Do not create typed function-pointer bindings" in markdown
-    assert "Before creating an `&mut` borrow" in markdown
-    assert "do not read, slice, or immutably borrow the original owner again" in markdown
+    assert "# SERAPH Rust Harness Context" in markdown
+    assert "## Crate Facts" in markdown
+    assert "## Target API" in markdown
+    assert "## Known Reachable Paths" in markdown
+    assert "## Related APIs" in markdown
+    assert "## Compile-Time Facts" in markdown
+    assert "## Similar API Usage" in markdown
+    assert "## Rust Idioms" in markdown
+    assert "## Generation Rules" not in markdown
+
+
+def test_render_context_markdown_surfaces_variant_opportunities():
+    knowledge = load_knowledge(FIXTURE)
+    graph = build_graph(knowledge)
+    target = rank_unsafe_targets(graph)[0]
+
+    markdown = render_context_markdown(knowledge, graph, target)
+    variant_section = markdown.split("## Variant Opportunities", 1)[1].split(
+        "## Similar API Usage", 1
+    )[0]
+
+    assert "## Variant Opportunities" in markdown
+    assert "### Setup Choices" in markdown
+    assert "### Input Shaping Choices" in markdown
+    assert "### State Progression Choices" in markdown
+    assert "### Boundary Choices" in markdown
+    assert "- setup API fixture_crate::Buffer::new produces fixture_crate::Buffer" in variant_section
+    assert "- target signature includes argument type usize" in variant_section
+    assert "- same-owner mutator surfaced in related APIs: fixture_crate::Buffer::push" in variant_section
+    assert "- documented safety precondition: The index must be in bounds." in variant_section
+    assert "before target" not in variant_section
+    assert "call the target immediately" not in variant_section
+    assert "prefer documented recoverable boundaries" not in variant_section
 
 
 def test_render_context_markdown_surfaces_compile_critical_import_trait_and_enum_facts():
@@ -156,18 +180,25 @@ def test_render_context_markdown_surfaces_compile_critical_import_trait_and_enum
 
     markdown = render_context_markdown(knowledge, graph, target)
 
-    assert "## Exact Import Paths" in markdown
-    assert "fixture::avutil::Dictionary" in markdown
-    assert "fixture::io::IoContext" in markdown
-    assert "fixture::io::Whence" in markdown
-    assert "## Required Traits" in markdown
-    assert "required_methods=buf_len" in markdown
-    assert "provided_methods=read, seek" in markdown
-    assert "## Trait Method Signatures" in markdown
-    assert "fixture::io::IoContext::buf_len: fn buf_len(&self) -> usize [required]" in markdown
-    assert "fixture::io::IoContext::seek: fn seek(&mut self, i64, Whence, bool) -> Result<u64, Error> [provided]" in markdown
-    assert "## Enum Variants" in markdown
-    assert "fixture::io::Whence: Size | Set | Cur | End" in markdown
+    compile_facts = markdown.split("## Compile-Time Facts", 1)[1].split("## Related APIs", 1)[0]
+    compile_fact_lines = compile_facts.splitlines()
+
+    assert "### Exact Import Paths" in compile_facts
+    assert "### Required Traits" in compile_facts
+    assert "### Trait Method Signatures" in compile_facts
+    assert "### Enum Variants" in compile_facts
+    assert "## Exact Import Paths" not in compile_fact_lines
+    assert "## Required Traits" not in compile_fact_lines
+    assert "## Trait Method Signatures" not in compile_fact_lines
+    assert "## Enum Variants" not in compile_fact_lines
+    assert "fixture::avutil::Dictionary" in compile_facts
+    assert "fixture::io::IoContext" in compile_facts
+    assert "fixture::io::Whence" in compile_facts
+    assert "required_methods=buf_len" in compile_facts
+    assert "provided_methods=read, seek" in compile_facts
+    assert "fixture::io::IoContext::buf_len: fn buf_len(&self) -> usize [required]" in compile_facts
+    assert "fixture::io::IoContext::seek: fn seek(&mut self, i64, Whence, bool) -> Result<u64, Error> [provided]" in compile_facts
+    assert "fixture::io::Whence: Size | Set | Cur | End" in compile_facts
 
 
 def test_render_context_markdown_trait_target_surfaces_implementor_setup():
@@ -294,13 +325,14 @@ def test_render_context_markdown_trait_target_surfaces_implementor_setup():
 
     markdown = render_context_markdown(knowledge, graph, target)
 
-    assert "## Required Setup APIs" in markdown
+    assert "## Known Reachable Paths" in markdown
     assert "fixture::BytesMut::with_capacity" in markdown
-    assert "## Exact Import Paths" in markdown
+    assert "## Compile-Time Facts" in markdown
+    assert "### Exact Import Paths" in markdown
     assert "type::fixture::BytesMut => fixture::BytesMut [kind=type]" in markdown
-    assert "## Required Traits" in markdown
+    assert "### Required Traits" in markdown
     assert "fixture::BufMut: required_methods=advance_mut, chunk_mut" in markdown
-    assert "## Trait Method Signatures" in markdown
+    assert "### Trait Method Signatures" in markdown
     assert "fixture::buf::BufMut::advance_mut: unsafe fn advance_mut(&mut self, usize) [required]" in markdown
 
 
@@ -561,5 +593,5 @@ def test_render_context_markdown_keeps_deep_setup_root_constructor():
 
     markdown = render_context_markdown(knowledge, graph, target)
 
-    setup_section = markdown.split("## Required Setup APIs", 1)[1].split("## Exact Import Paths", 1)[0]
+    setup_section = markdown.split("## Known Reachable Paths", 1)[1].split("## Compile-Time Facts", 1)[0]
     assert "fixture::T4::new" in setup_section

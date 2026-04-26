@@ -594,6 +594,95 @@ fn main() {
 }
 
 #[test]
+fn write_coverage_accepts_known_reachable_paths_in_context() {
+    let root = temp_dir("coverage-known-reachable-paths");
+    let coverage_path = root.join("coverage.json");
+    let context_path = root.join("rag_target_008.md");
+    let compile_index_path = root.join("reports/compile_008_index.json");
+    let fuzz_dir = root.join("fuzz");
+    let reports_dir = root.join("reports");
+
+    fs::create_dir_all(&fuzz_dir).expect("create fuzz dir");
+    fs::create_dir_all(&reports_dir).expect("create reports dir");
+
+    let harness_path = fuzz_dir.join("harness_008_01.rs");
+    fs::write(
+        &context_path,
+        "\
+# SERAPH Rust Harness Context
+
+## Target API
+- api_id: api::fixture::Buffer::get_unchecked
+
+## Known Reachable Paths
+- api::fixture::Buffer::new: fixture::Buffer::new — fn new() -> Buffer [goal=reach_target basis=producer_chain produces=Buffer depth=1]
+- api::fixture::Builder::with_capacity: fixture::Builder::with_capacity — fn with_capacity(usize) -> Builder [goal=reach_target basis=producer_chain produces=Builder depth=2]
+
+## Related APIs
+- api::fixture::Buffer::len: fixture::Buffer::len — fn len(&Self) -> usize
+",
+    )
+    .expect("write context");
+    fs::write(
+        &harness_path,
+        "\
+use fixture::Buffer;
+use fixture::Builder;
+
+fn main() {
+    let mut buffer = Buffer::new();
+    let builder = Builder::with_capacity(16);
+    let _ = buffer.len();
+    println!(\"SERAPH_STEP_ENTER:1:api::fixture::Buffer::get_unchecked\");
+    let _ = buffer.get_unchecked(0);
+    println!(\"SERAPH_STEP_OK:1:api::fixture::Buffer::get_unchecked\");
+    let _ = builder;
+}
+",
+    )
+    .expect("write harness");
+    fs::write(
+        &compile_index_path,
+        format!(
+            "{{\"round\":8,\"status\":\"ok\",\"reports\":[{{\"harness\":\"{}\",\"report\":\"{}\",\"status\":\"ok\",\"exit_code\":0}}]}}\n",
+            harness_path.display(),
+            reports_dir.join("compile_008_01.json").display(),
+        ),
+    )
+    .expect("write compile index");
+
+    let update = write_coverage_from_phase3(
+        &coverage_path,
+        &context_path,
+        Some(&compile_index_path),
+        None,
+        None,
+        None,
+    )
+    .expect("update coverage");
+
+    assert_eq!(update.status, ApiCoverageStatus::Validated);
+    assert_eq!(
+        update.state.related_total_api_ids,
+        vec![
+            ApiId::from("api::fixture::Buffer::len"),
+            ApiId::from("api::fixture::Buffer::new"),
+            ApiId::from("api::fixture::Builder::with_capacity"),
+        ]
+    );
+    let record = update.state.harnesses.get("8:1").expect("harness record");
+    assert_eq!(
+        record.api_ids,
+        vec![
+            ApiId::from("api::fixture::Buffer::get_unchecked"),
+            ApiId::from("api::fixture::Buffer::new"),
+            ApiId::from("api::fixture::Builder::with_capacity"),
+            ApiId::from("api::fixture::Buffer::len"),
+        ]
+    );
+}
+
+#[test]
 fn write_coverage_does_not_count_related_imports_without_static_calls() {
     let root = temp_dir("coverage-related-import-only");
     let coverage_path = root.join("coverage.json");

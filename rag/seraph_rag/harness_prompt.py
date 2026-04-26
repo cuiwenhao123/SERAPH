@@ -19,45 +19,36 @@ def _normalize_style(style: str) -> str:
 def _build_system_prompt(style: str) -> str:
     if style != DEFAULT_HARNESS_STYLE:
         raise ValueError("unsupported harness style: {}".format(style))
-    return """You are a Rust fuzz harness expert.
+    return """You are SERAPH's Rust fuzz harness generation expert.
 
-Your task is to generate AFL++-friendly Rust harness variants from SERAPH RAG context.
+Your job is to generate AFL++-friendly Rust harness variants from a structured SERAPH context.
 
-Rules:
-1. Generate a normal Rust binary harness with `fn main()`.
-2. Read fuzz bytes from stdin or an optional input file path argument using only the Rust standard library.
-3. Call the Target API in every harness variant.
-4. Use public APIs from Related APIs to construct meaningful pre-state.
-5. Keep unsafe blocks as narrow as possible.
-6. Use early return for recoverable Result and Option paths; do not unwrap recoverable failures.
-7. Emit SERAPH_STEP_ENTER:<step_no>:<api_id> immediately before each targeted API call.
-8. Emit SERAPH_STEP_OK:<step_no>:<api_id> immediately after the targeted API call returns successfully.
-9. Preserve exact stable api_id strings from the RAG context in SERAPH markers.
-10. Use the crate import name specified by the RAG context.
-11. Do not use `target_lib` as a crate name.
-12. Do not use `libfuzzer_sys`, `#![no_main]`, `fuzz_target!`, or `afl::fuzz!`.
-13. If perfect setup is impossible, emit the smallest compile-fixable harness that still reaches the target API.
-14. Use only crate APIs explicitly named in the SERAPH RAG context.
-15. Do not invent constructors, helper methods, trait impls, modules, or functions that are not present in the context.
-16. If setup is incomplete, prefer a conservative harness that returns early over invented API calls.
-17. Do not rename modules or types from the context.
-18. Prefer Required Setup APIs when an opaque wrapper, borrowed handle, or deref-backed owner value is needed.
-19. After the target API succeeds, stop unless an explicit cleanup step is required.
-20. Do not add extra post-target exercise calls.
-21. Do not fabricate enum constructors, transmute arbitrary integers, or use unsafe initialization tricks to invent missing values.
-22. Use exact canonical module paths from `Exact Import Paths`; do not shorten imports to the crate root unless that exact root path appears there.
-23. If you implement a trait from `Required Traits`, implement every listed required method. Listed provided methods are optional overrides, not mandatory.
-24. If you override a trait method listed in `Trait Method Signatures`, copy the exact implementation-ready signature from `Trait Method Signatures`.
-25. For trait-method targets with a `Self` receiver, call the target on a concrete implementor surfaced by `Required Setup APIs`, `Exact Import Paths`, or `Required Traits`; do not assume similarly named wrapper types implement the trait.
-26. If you match or construct an enum from `Enum Variants`, cover every listed variant unless the context marks that enum as non-exhaustive.
-27. Do not create typed function-pointer bindings, `std::mem::size_of` placeholders, `PhantomData`, or dead helper functions merely to reference APIs or lifetime-bearing types.
-28. If setup is unavailable, return early; do not fake reachability by mentioning APIs without calling them.
-29. Do not use `std::process::exit`, `panic!`, `unreachable!`, `todo!`, or `unimplemented!` inside placeholder helpers to fabricate missing values or references.
-30. Do not use `MaybeUninit`, `mem::zeroed`, `transmute`, `Box::into_raw`, or similar unsafe initialization tricks to fabricate missing target state unless the target or setup signatures explicitly require them.
-31. Treat `Exact Import Paths`, `Required Traits`, `Trait Method Signatures`, and `Enum Variants` as authoritative compile-time facts.
-32. Before creating an `&mut` borrow, mutable slice view, or wrapper over some owner value, first compute any indexes, lengths, cloned source buffers, or read-only bytes you still need from that owner.
-33. After creating an `&mut` borrow into a value, do not read, slice, or immutably borrow the original owner again until that mutable borrow is no longer used.
-34. For constructors or adapters like `Type::new(owner.as_mut_slice())` that return an `&mut` wrapper, compute lengths, indexes, and any source bytes before the call, and do not read `owner` again until that wrapper is no longer used.
+Primary goals, in order:
+1. Real target reachability: every variant must truly call the Target API.
+2. Factual correctness: use only crate APIs, types, traits, enum variants, module paths, and setup facts explicitly present in the context.
+3. Rust compile realism: treat Compile-Time Facts as authoritative and keep the code compile-fixable.
+4. Diversity: when the context supports it, vary setup, input shaping, boundary selection, or state progression across variants.
+
+Output contract:
+- Output only Rust code blocks, one harness variant per code block.
+- Generate a normal Rust binary with `fn main()`.
+- Read fuzz bytes from stdin or an optional file path argument using only the Rust standard library.
+- Call the Target API in every variant.
+- Preserve exact `SERAPH_STEP_ENTER:<step_no>:<api_id>` and `SERAPH_STEP_OK:<step_no>:<api_id>` markers around each successful target call.
+- Use the crate import name specified in the context.
+- Do not use `target_lib` as a crate name.
+
+How to use the context:
+- `Known Reachable Paths` are fact-grounded reachability hints surfaced from the current SERAPH context. They may be partial and are not the only allowed sequence.
+- `Related APIs` are the main building blocks for designing the harness.
+- `Compile-Time Facts` are hard constraints, not suggestions.
+- `Variant Opportunities` indicate where diversity is likely to be meaningful.
+- `Rust Idioms` are safety and ownership guidance.
+
+Do not hallucinate:
+- Do not invent constructors, helper methods, modules, trait impls, enum variants, imports, ownership transitions, or preconditions not supported by the context.
+- Do not use crate APIs that are not explicitly named in the context.
+- If a setup step is not factually supported, do not guess; prefer a smaller conservative harness or early return.
 """.strip()
 
 
@@ -68,13 +59,22 @@ def build_prompt_bundle(
 ) -> Dict[str, Any]:
     normalized_style = _normalize_style(style)
     target_api_id = extract_target_api_id(rag_context)
-    user_prompt = """Generate {variants} harness variants from the SERAPH RAG context below.
+    user_prompt = """Generate {variants} Rust harness variants for the SERAPH target below.
 
-Each variant must use a different setup, input, or boundary strategy when the context supports it. Return only Rust code blocks, one per variant. Do not explain the code outside comments that belong in the harness source.
-Treat `Exact Import Paths`, `Required Traits`, `Trait Method Signatures`, and `Enum Variants` in the RAG context as authoritative compile-time facts.
+Requirements:
+- Every variant must call the Target API.
+- You may design your own setup and call sequence using the facts in the context.
+- Prefer `Related APIs` as the main construction pool.
+- Use `Known Reachable Paths` as fact-grounded reachability hints when helpful, but do not copy them mechanically.
+- Treat `Compile-Time Facts` as authoritative.
+- Make variants meaningfully different when the context supports it. Prefer diversity in setup path, input shaping, boundary selection, state progression, or recoverable error exploration.
+- If a more ambitious path is not factually supported, choose a smaller conservative path instead of guessing.
+- Keep all logic inside a normal Rust binary `fn main()`.
+- Return only Rust code blocks, one code block per variant, with no prose outside the code blocks.
 
 Target API id: {target_api_id}
 Harness style: {style}
+Requested variants: {variants}
 
 {rag_context}
 """.format(

@@ -35,8 +35,9 @@ def test_cli_graph_targets_and_retrieve(tmp_path, capsys):
         str(context_path),
     ])
     context = context_path.read_text(encoding="utf-8")
-    assert "SERAPH_STEP_OK" in context
-    assert "## Semantically Similar API Docs" in context
+    assert "## Known Reachable Paths" in context
+    assert "## Similar API Usage" in context
+    assert "## Generation Rules" not in context
 
 
 def test_cli_harness_prompt_writes_prompt_bundle(tmp_path):

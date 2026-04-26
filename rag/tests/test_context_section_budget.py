@@ -1,34 +1,62 @@
 from pathlib import Path
 
-from seraph_rag.graph_builder import build_graph, write_graph
+from seraph_rag.graph_builder import build_graph
 from seraph_rag.knowledge_loader import load_knowledge
-from seraph_rag.retrieve import render_context_from_stores
-from seraph_rag.vector_index import index_knowledge
+from seraph_rag.retrieve import _fit_context_budget, rank_unsafe_targets, render_context_markdown
 
-FIXTURE = Path(__file__).parent / "fixtures" / "s3_audit_fixture_knowledge.json"
+FIXTURE = Path(__file__).parent / "fixtures" / "minimal_knowledge.json"
 
 
-def test_context_budget_preserves_all_core_sections(tmp_path):
+def test_fit_context_budget_truncates_variant_before_related_and_compile():
     knowledge = load_knowledge(FIXTURE)
-    vectordb = tmp_path / "vectordb"
-    graph_path = tmp_path / "graph.pkl"
-    index_knowledge(knowledge, vectordb)
-    write_graph(build_graph(knowledge), graph_path)
+    graph = build_graph(knowledge)
+    target = rank_unsafe_targets(graph)[0]
+    markdown = render_context_markdown(knowledge, graph, target, max_context_chars=10_000)
 
-    markdown = render_context_from_stores(
-        knowledge,
-        vectordb,
-        graph_path,
-        max_context_chars=1800,
-    )
+    compact = _fit_context_budget(markdown, 1150)
+    variant_section = compact.split("## Variant Opportunities", 1)[1].split(
+        "## Similar API Usage", 1
+    )[0]
+    related_section = compact.split("## Related APIs", 1)[1].split(
+        "## Variant Opportunities", 1
+    )[0]
+    compile_section = compact.split("## Compile-Time Facts", 1)[1].split(
+        "## Related APIs", 1
+    )[0]
 
-    assert len(markdown) <= 1800
-    for section in [
-        "## Target API",
-        "## Related APIs",
-        "## Semantically Similar API Docs",
-        "## Rust Idioms",
-        "## Generation Rules",
-    ]:
-        assert section in markdown
-    assert "SERAPH_STEP_OK" in markdown
+    assert len(compact) <= 1150
+    assert "- [Section truncated to fit budget]" in variant_section
+    assert "- [Section truncated to fit budget]" in compact.split("## Similar API Usage", 1)[1].split(
+        "## Rust Idioms", 1
+    )[0]
+    assert "- [Section truncated to fit budget]" in compact.split("## Rust Idioms", 1)[1]
+    assert "- [Section truncated to fit budget]" not in related_section
+    assert "- [Section truncated to fit budget]" not in compile_section
+    assert "fn::fixture_crate::Buffer::get_unchecked" in compact
+    assert "fixture_crate::Buffer::new" in compact
+
+
+def test_fit_context_budget_truncates_related_and_reachability_before_compile():
+    knowledge = load_knowledge(FIXTURE)
+    graph = build_graph(knowledge)
+    target = rank_unsafe_targets(graph)[0]
+    markdown = render_context_markdown(knowledge, graph, target, max_context_chars=10_000)
+
+    compact = _fit_context_budget(markdown, 1000)
+    reachable_section = compact.split("## Known Reachable Paths", 1)[1].split(
+        "## Compile-Time Facts", 1
+    )[0]
+    related_section = compact.split("## Related APIs", 1)[1].split(
+        "## Variant Opportunities", 1
+    )[0]
+    compile_section = compact.split("## Compile-Time Facts", 1)[1].split(
+        "## Related APIs", 1
+    )[0]
+
+    assert len(compact) <= 1000
+    assert "- [Section truncated to fit budget]" in reachable_section
+    assert "- [Section truncated to fit budget]" in related_section
+    assert "- [Section truncated to fit budget]" in compact.split("## Variant Opportunities", 1)[1].split(
+        "## Similar API Usage", 1
+    )[0]
+    assert "- [Section truncated to fit budget]" not in compile_section
