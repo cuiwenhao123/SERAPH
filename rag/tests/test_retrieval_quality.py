@@ -8,7 +8,31 @@ from seraph_rag.vector_index import index_knowledge
 FIXTURE = Path(__file__).parent / "fixtures" / "minimal_knowledge.json"
 
 
-def test_render_context_from_stores_dedupes_target_and_honors_budget(tmp_path):
+def test_render_context_from_stores_dedupes_target_from_similar_usage(tmp_path):
+    vectordb = tmp_path / "vectordb"
+    graph_path = tmp_path / "graph.pkl"
+    knowledge = load_knowledge(FIXTURE)
+    index_knowledge(knowledge, vectordb)
+    write_graph(build_graph(knowledge), graph_path)
+
+    markdown = render_context_from_stores(
+        knowledge,
+        vectordb,
+        graph_path,
+        max_context_chars=1250,
+    )
+
+    similar_section = markdown.split("## Similar API Usage", 1)[1].split(
+        "## Rust Idioms", 1
+    )[0]
+
+    assert "- [Section truncated to fit budget]" not in similar_section
+    assert "fixture_crate::Buffer::get_unchecked" not in similar_section
+    assert len(markdown) <= 1250
+    assert "## Generation Rules" not in markdown
+
+
+def test_render_context_from_stores_honors_budget_truncation_order(tmp_path):
     vectordb = tmp_path / "vectordb"
     graph_path = tmp_path / "graph.pkl"
     knowledge = load_knowledge(FIXTURE)
@@ -39,6 +63,5 @@ def test_render_context_from_stores_dedupes_target_and_honors_budget(tmp_path):
     assert "- [Section truncated to fit budget]" in markdown.split("## Rust Idioms", 1)[1]
     assert "- [Section truncated to fit budget]" not in related_section
     assert "- [Section truncated to fit budget]" not in compile_section
-    assert "fixture_crate::Buffer::get_unchecked" not in similar_section
     assert len(markdown) <= 1025
     assert "## Generation Rules" not in markdown
