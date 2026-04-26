@@ -36,13 +36,16 @@ def test_fit_context_budget_truncates_variant_before_related_and_compile():
     assert "fixture_crate::Buffer::new" in compact
 
 
-def test_fit_context_budget_truncates_related_after_variant():
+def test_fit_context_budget_truncates_related_and_reachability_before_compile():
     knowledge = load_knowledge(FIXTURE)
     graph = build_graph(knowledge)
     target = rank_unsafe_targets(graph)[0]
     markdown = render_context_markdown(knowledge, graph, target, max_context_chars=10_000)
 
-    compact = _fit_context_budget(markdown, 1050)
+    compact = _fit_context_budget(markdown, 1000)
+    reachable_section = compact.split("## Known Reachable Paths", 1)[1].split(
+        "## Compile-Time Facts", 1
+    )[0]
     related_section = compact.split("## Related APIs", 1)[1].split(
         "## Variant Opportunities", 1
     )[0]
@@ -50,7 +53,8 @@ def test_fit_context_budget_truncates_related_after_variant():
         "## Related APIs", 1
     )[0]
 
-    assert len(compact) <= 1050
+    assert len(compact) <= 1000
+    assert "- [Section truncated to fit budget]" in reachable_section
     assert "- [Section truncated to fit budget]" in related_section
     assert "- [Section truncated to fit budget]" in compact.split("## Variant Opportunities", 1)[1].split(
         "## Similar API Usage", 1

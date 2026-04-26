@@ -616,8 +616,8 @@ def _fit_context_budget(markdown: str, max_context_chars: int) -> str:
         "## Rust Idioms",
         "## Variant Opportunities",
         "## Related APIs",
-        "## Compile-Time Facts",
         "## Known Reachable Paths",
+        "## Compile-Time Facts",
         "## Target API",
         "## Crate Facts",
     ]

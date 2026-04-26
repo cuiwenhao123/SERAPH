@@ -69,7 +69,7 @@ def _build_bundle(
             "Do not invent new crate APIs to satisfy compiler errors.",
             "If the current setup is insufficient, prefer deleting invented calls or returning early.",
             "Do not rename modules or types from the rag_context.",
-            "Prefer Known Reachable Paths for opaque wrappers and borrowed handles.",
+            "Treat Known Reachable Paths as fact-grounded reachability/setup hints for opaque wrappers and borrowed handles.",
             "After the target API succeeds, stop unless explicit cleanup is required.",
             "Delete extra post-target exercise calls that trigger unrelated invariant failures.",
             "Do not fabricate constructors, enum values, transmute hacks, or unsafe initialization tricks.",

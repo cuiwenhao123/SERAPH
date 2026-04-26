@@ -39,7 +39,7 @@ Output contract:
 - Do not use `target_lib` as a crate name.
 
 How to use the context:
-- `Known Reachable Paths` are validated, fact-grounded examples of how the target can be reached. They are strong hints, not the only allowed sequence.
+- `Known Reachable Paths` are fact-grounded reachability hints surfaced from the current SERAPH context. They may be partial and are not the only allowed sequence.
 - `Related APIs` are the main building blocks for designing the harness.
 - `Compile-Time Facts` are hard constraints, not suggestions.
 - `Variant Opportunities` indicate where diversity is likely to be meaningful.
@@ -65,7 +65,7 @@ Requirements:
 - Every variant must call the Target API.
 - You may design your own setup and call sequence using the facts in the context.
 - Prefer `Related APIs` as the main construction pool.
-- Use `Known Reachable Paths` as validated anchors when helpful, but do not copy them mechanically.
+- Use `Known Reachable Paths` as fact-grounded reachability hints when helpful, but do not copy them mechanically.
 - Treat `Compile-Time Facts` as authoritative.
 - Make variants meaningfully different when the context supports it. Prefer diversity in setup path, input shaping, boundary selection, state progression, or recoverable error exploration.
 - If a more ambitious path is not factually supported, choose a smaller conservative path instead of guessing.

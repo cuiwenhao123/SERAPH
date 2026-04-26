@@ -43,9 +43,12 @@ def test_render_context_from_stores_honors_budget_truncation_order(tmp_path):
         knowledge,
         vectordb,
         graph_path,
-        max_context_chars=1025,
+        max_context_chars=1000,
     )
 
+    reachable_section = markdown.split("## Known Reachable Paths", 1)[1].split(
+        "## Compile-Time Facts", 1
+    )[0]
     variant_section = markdown.split("## Variant Opportunities", 1)[1].split(
         "## Similar API Usage", 1
     )[0]
@@ -58,10 +61,11 @@ def test_render_context_from_stores_honors_budget_truncation_order(tmp_path):
     similar_section = markdown.split("## Similar API Usage", 1)[1].split(
         "## Rust Idioms", 1
     )[0]
+    assert "- [Section truncated to fit budget]" in reachable_section
     assert "- [Section truncated to fit budget]" in variant_section
     assert "- [Section truncated to fit budget]" in similar_section
     assert "- [Section truncated to fit budget]" in markdown.split("## Rust Idioms", 1)[1]
-    assert "- [Section truncated to fit budget]" not in related_section
+    assert "- [Section truncated to fit budget]" in related_section
     assert "- [Section truncated to fit budget]" not in compile_section
-    assert len(markdown) <= 1025
+    assert len(markdown) <= 1000
     assert "## Generation Rules" not in markdown

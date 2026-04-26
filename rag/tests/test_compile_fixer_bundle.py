@@ -51,7 +51,11 @@ def test_write_compile_fixer_bundles_for_failed_reports(tmp_path):
     assert "mismatched types" in data["diagnostics"]["stderr"]
     assert "Only use crate APIs explicitly present in the rag_context or harness_source." in data["rules"]
     assert "Do not invent new crate APIs to satisfy compiler errors." in data["rules"]
-    assert "Prefer Known Reachable Paths for opaque wrappers and borrowed handles." in data["rules"]
+    assert (
+        "Treat Known Reachable Paths as fact-grounded reachability/setup hints for opaque wrappers and "
+        "borrowed handles."
+        in data["rules"]
+    )
     assert "Prefer Required Setup APIs for opaque wrappers and borrowed handles." not in data["rules"]
 
 

@@ -35,17 +35,29 @@ def test_build_prompt_bundle_uses_fact_grounded_prompt_contract():
     assert bundle["variants"] == 2
     assert bundle["system_prompt"].startswith("You are SERAPH's Rust fuzz harness generation expert.")
     assert (
-        "`Known Reachable Paths` are validated, fact-grounded examples of how the target can be reached. "
-        "They are strong hints, not the only allowed sequence."
+        "`Known Reachable Paths` are fact-grounded reachability hints surfaced from the current SERAPH "
+        "context. They may be partial and are not the only allowed sequence."
         in bundle["system_prompt"]
     )
     assert "`Related APIs` are the main building blocks" in bundle["system_prompt"]
+    assert "Generate a normal Rust binary with `fn main()`." in bundle["system_prompt"]
+    assert (
+        "Read fuzz bytes from stdin or an optional file path argument using only the Rust standard library."
+        in bundle["system_prompt"]
+    )
+    assert (
+        "Preserve exact `SERAPH_STEP_ENTER:<step_no>:<api_id>` and "
+        "`SERAPH_STEP_OK:<step_no>:<api_id>` markers around each successful target call."
+        in bundle["system_prompt"]
+    )
+    assert "Do not use `target_lib` as a crate name." in bundle["system_prompt"]
     assert "You may design your own setup and call sequence using the facts in the context." in bundle["user_prompt"]
     assert "Prefer `Related APIs` as the main construction pool." in bundle["user_prompt"]
     assert (
-        "Use `Known Reachable Paths` as validated anchors when helpful, but do not copy them mechanically."
+        "Use `Known Reachable Paths` as fact-grounded reachability hints when helpful, but do not copy them mechanically."
         in bundle["user_prompt"]
     )
+    assert "Keep all logic inside a normal Rust binary `fn main()`." in bundle["user_prompt"]
     assert context.rstrip() in bundle["user_prompt"]
 
 

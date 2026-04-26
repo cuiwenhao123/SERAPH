@@ -52,7 +52,7 @@ The retrieved markdown context is organized around:
 - `Similar API Usage`
 - `Rust Idioms`
 
-`Known Reachable Paths` are validated reachability hints, not mandatory scripts. The model may construct a different harness sequence as long as every API, import path, trait fact, and setup assumption is explicitly supported by the context.
+`Known Reachable Paths` are fact-grounded reachability/setup hints surfaced from the current SERAPH context. They may be partial, they are not mandatory scripts, and they are not the only allowed sequence. The model may construct a different harness sequence as long as every API, import path, trait fact, and setup assumption is explicitly supported by the context.
 
 ## Active Harness Style
 
@@ -569,7 +569,7 @@ The current coverage update remains target-centric for the active round. It now 
 
 - target coverage continues to use `total_api_ids`, `covered_api_ids`, `uncovered_api_ids`, and `coverage_rate`
 - related static coverage uses `related_total_api_ids`, `related_covered_api_ids`, `related_uncovered_api_ids`, and `related_coverage_rate`
-- this related track is intentionally heuristic: it only considers APIs listed in the same round's `Required Setup APIs` and `Related APIs`, then marks a related API as covered when a compile-successful harness source contains a static call-shaped use of that API
+- this related track is intentionally heuristic: the active prompt contract now surfaces `Known Reachable Paths`, while coverage compatibility still accepts legacy `Required Setup APIs` during rollout. The tracker considers APIs listed in the same round's `Known Reachable Paths`, legacy `Required Setup APIs`, and `Related APIs`, then marks a related API as covered when a compile-successful harness source contains a static call-shaped use of that API
 
 This keeps historical target coverage semantics stable while finally giving the system a way to measure neighborhood API combination coverage.
 
