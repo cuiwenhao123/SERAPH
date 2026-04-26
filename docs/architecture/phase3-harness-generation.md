@@ -39,6 +39,21 @@ The prompt bundle contains:
 - `system_prompt`: stable Phase 3 generation rules
 - `user_prompt`: RAG context plus task-specific generation request
 
+The active Phase 3 prompt contract is now fact-grounded rather than rule-heavy.
+
+The retrieved markdown context is organized around:
+
+- `Crate Facts`
+- `Target API`
+- `Known Reachable Paths`
+- `Related APIs`
+- `Compile-Time Facts`
+- `Variant Opportunities`
+- `Similar API Usage`
+- `Rust Idioms`
+
+`Known Reachable Paths` are validated reachability hints, not mandatory scripts. The model may construct a different harness sequence as long as every API, import path, trait fact, and setup assumption is explicitly supported by the context.
+
 ## Active Harness Style
 
 The active Phase 3 harness style is `aflpp`.
