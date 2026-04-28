@@ -34,6 +34,8 @@ def build_graph(knowledge: Dict[str, Any]) -> nx.DiGraph:
             kind="type",
             name=type_info.get("name", ""),
             path=type_info.get("canonical_path", type_id),
+            public_paths=list(type_info.get("public_paths") or []),
+            public_anchor_module_id=type_info.get("public_anchor_module_id"),
         )
         module_id = type_info.get("public_anchor_module_id")
         if module_id:
@@ -46,6 +48,9 @@ def build_graph(knowledge: Dict[str, Any]) -> nx.DiGraph:
             kind="trait",
             path=trait.get("canonical_path", trait_id),
             is_unsafe=bool(trait.get("is_unsafe")),
+            name=trait.get("name", ""),
+            public_paths=list(trait.get("public_paths") or []),
+            public_anchor_module_id=trait.get("public_anchor_module_id"),
         )
 
     for impl_info in knowledge.get("trait_impl_registry", []):
@@ -75,6 +80,8 @@ def build_graph(knowledge: Dict[str, Any]) -> nx.DiGraph:
             api_kind=api.get("api_kind", ""),
             owner_type_id=api.get("owner_type_id"),
             receiver=api.get("receiver", ""),
+            arg_types=list(api.get("arg_types") or []),
+            generic_params=list(api.get("generic_params") or []),
             has_unsafe=has_unsafe,
             has_ffi=api_id in ffi_api_ids,
             has_panic_points=api_id in panic_api_ids,

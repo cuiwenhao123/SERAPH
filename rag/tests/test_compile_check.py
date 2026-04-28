@@ -174,3 +174,235 @@ fn main() {
     data = json.loads(report.read_text(encoding="utf-8"))
     assert result["status"] == "ok"
     assert data["exit_code"] == 0
+
+
+def test_run_compile_check_allows_generic_target_call_with_turbofish(tmp_path):
+    harness = tmp_path / "harness_008_01.rs"
+    report = tmp_path / "compile_report.json"
+    harness.write_text(
+        """struct Client;
+
+impl Client {
+    fn set_as_callback<F>(&self, _callback: Option<F>) {}
+}
+
+fn main() {
+    let client = Client;
+    println!("SERAPH_STEP_ENTER:1:api::fixture::Client::set_as_callback");
+    client.set_as_callback::<fn(i32)>(None);
+    println!("SERAPH_STEP_OK:1:api::fixture::Client::set_as_callback");
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = run_compile_check(
+        harness,
+        report,
+        command_template="python3 -c 'import sys; sys.exit(0)'",
+    )
+
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert result["status"] == "ok"
+    assert data["exit_code"] == 0
+
+
+def test_run_compile_check_allows_real_target_call_via_public_path_from_context(tmp_path):
+    contexts = tmp_path / "contexts"
+    fuzz = tmp_path / "fuzz"
+    contexts.mkdir()
+    fuzz.mkdir()
+    (contexts / "rag_target_009.md").write_text(
+        """## Target API
+- api_id: api::fixture::utf8::decode
+- path: fixture::decode_utf8
+""",
+        encoding="utf-8",
+    )
+    harness = fuzz / "harness_009_01.rs"
+    report = tmp_path / "compile_report.json"
+    harness.write_text(
+        """fn main() {
+    let data = b\"abc\";
+    println!(\"SERAPH_STEP_ENTER:1:api::fixture::utf8::decode\");
+    let _value = fixture::decode_utf8(data);
+    println!(\"SERAPH_STEP_OK:1:api::fixture::utf8::decode\");
+}
+
+mod fixture {
+    pub fn decode_utf8(_bytes: &[u8]) -> (Option<char>, usize) {
+        (Some('a'), 1)
+    }
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = run_compile_check(
+        harness,
+        report,
+        command_template="python3 -c 'import sys; sys.exit(0)'",
+    )
+
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert result["status"] == "ok"
+    assert data["exit_code"] == 0
+
+
+def test_run_compile_check_rejects_positive_offset_slice_without_empty_input_guard(tmp_path):
+    harness = tmp_path / "harness_009_01.rs"
+    report = tmp_path / "compile_report.json"
+    harness.write_text(
+        """fn target(_value: &str) {}
+
+fn main() {
+    let data: Vec<u8> = Vec::new();
+    let take = core::cmp::min(4, data.len().saturating_sub(1));
+    let value = std::str::from_utf8(&data[1..1 + take]).unwrap_or("");
+    println!("SERAPH_STEP_ENTER:1:api::fixture::target");
+    target(value);
+    println!("SERAPH_STEP_OK:1:api::fixture::target");
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = run_compile_check(
+        harness,
+        report,
+        command_template="python3 -c 'import sys; sys.exit(0)'",
+    )
+
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert result["status"] == "failed"
+    assert data["exit_code"] == 2
+    assert "input-derived slice" in data["stderr"]
+
+
+def test_run_compile_check_rejects_placeholder_pointee_in_named_fn_signature(tmp_path):
+    harness = tmp_path / "harness_013_01.rs"
+    report = tmp_path / "compile_report.json"
+    harness.write_text(
+        """use std::os::raw::{c_int, c_void};
+
+fn rw_cb(
+    _usr_ptr: *mut c_void,
+    _op: c_int,
+    _transport_size: c_int,
+    _tag: *mut _,
+    _pdata: *mut c_void,
+) {}
+
+fn main() {
+    println!("SERAPH_STEP_ENTER:1:api::fixture::danger");
+    danger();
+    println!("SERAPH_STEP_OK:1:api::fixture::danger");
+}
+
+fn danger() {}
+""",
+        encoding="utf-8",
+    )
+
+    result = run_compile_check(
+        harness,
+        report,
+        command_template="python3 -c 'import sys; sys.exit(0)'",
+    )
+
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert result["status"] == "failed"
+    assert data["exit_code"] == 2
+    assert "placeholder `_` in named function item signature" in data["stderr"]
+
+
+def test_run_compile_check_rejects_saturating_plus_one_slice_without_guard(tmp_path):
+    harness = tmp_path / "harness_010_01.rs"
+    report = tmp_path / "compile_report.json"
+    harness.write_text(
+        """fn target(_value: &[u8]) {}
+
+fn main() {
+    let data: Vec<u8> = Vec::new();
+    let first_nul = data.iter().position(|&b| b == 0).unwrap_or(data.len());
+    let value = &data[first_nul.saturating_add(1)..];
+    println!("SERAPH_STEP_ENTER:1:api::fixture::target");
+    target(value);
+    println!("SERAPH_STEP_OK:1:api::fixture::target");
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = run_compile_check(
+        harness,
+        report,
+        command_template="python3 -c 'import sys; sys.exit(0)'",
+    )
+
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert result["status"] == "failed"
+    assert data["exit_code"] == 2
+    assert "input-derived slice" in data["stderr"]
+
+
+def test_run_compile_check_rejects_idx_slice_after_saturating_plus_one_without_guard(tmp_path):
+    harness = tmp_path / "harness_011_01.rs"
+    report = tmp_path / "compile_report.json"
+    harness.write_text(
+        """fn target(_value: &str) {}
+
+fn main() {
+    let data: Vec<u8> = Vec::new();
+    let mut idx = 0usize;
+    idx = idx.saturating_add(1);
+    let take = data.len().saturating_sub(idx);
+    let ip_bytes = &data[idx..idx + take];
+    let value = std::str::from_utf8(ip_bytes).unwrap_or("");
+    println!("SERAPH_STEP_ENTER:1:api::fixture::target");
+    target(value);
+    println!("SERAPH_STEP_OK:1:api::fixture::target");
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = run_compile_check(
+        harness,
+        report,
+        command_template="python3 -c 'import sys; sys.exit(0)'",
+    )
+
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert result["status"] == "failed"
+    assert data["exit_code"] == 2
+    assert "input-derived slice" in data["stderr"]
+
+
+def test_run_compile_check_allows_get_based_slice_for_short_inputs(tmp_path):
+    harness = tmp_path / "harness_012_01.rs"
+    report = tmp_path / "compile_report.json"
+    harness.write_text(
+        """fn target(_value: &[u8]) {}
+
+fn main() {
+    let data: Vec<u8> = Vec::new();
+    let take = core::cmp::min(4, data.len().saturating_sub(1));
+    let value = data.get(1..1 + take).unwrap_or(&[]);
+    println!("SERAPH_STEP_ENTER:1:api::fixture::target");
+    target(value);
+    println!("SERAPH_STEP_OK:1:api::fixture::target");
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = run_compile_check(
+        harness,
+        report,
+        command_template="python3 -c 'import sys; sys.exit(0)'",
+    )
+
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert result["status"] == "ok"
+    assert data["exit_code"] == 0

@@ -629,3 +629,82 @@ def test_select_unsafe_target_skips_unconstructible_targets_by_default():
 
     target = select_unsafe_target(graph, round_no=1)
     assert target.api_id == "api::construct_fixture::DecodeContext::decode"
+
+
+def unnameable_arg_target_knowledge():
+    return {
+        "crate_meta": {"crate_import_name": "ffi_fixture"},
+        "modules": [{"module_id": "mod::ffi_fixture", "canonical_path": "ffi_fixture"}],
+        "types": [
+            {
+                "type_id": "type::ffi_fixture::Client",
+                "name": "Client",
+                "canonical_path": "ffi_fixture::Client",
+                "public_anchor_module_id": "mod::ffi_fixture",
+            },
+        ],
+        "apis": [
+            {
+                "api_id": "api::ffi_fixture::Client::create",
+                "name": "create",
+                "canonical_path": "ffi_fixture::Client::create",
+                "public_anchor_module_id": "mod::ffi_fixture",
+                "owner_type_id": "type::ffi_fixture::Client",
+                "api_kind": "constructor",
+                "signature_text": "fn create() -> Client",
+                "return_type": "Self",
+                "arg_types": [],
+                "doc_sections": {"safety": ""},
+            },
+            {
+                "api_id": "api::ffi_fixture::Client::as_read_szl",
+                "name": "as_read_szl",
+                "canonical_path": "ffi_fixture::Client::as_read_szl",
+                "public_anchor_module_id": "mod::ffi_fixture",
+                "owner_type_id": "type::ffi_fixture::Client",
+                "api_kind": "inherent_method",
+                "signature_text": "fn as_read_szl(&Self, &mut TS7SZL, &mut i32) -> Result<()>",
+                "receiver": "&Self",
+                "return_type": "Result<()>",
+                "arg_types": ["&mut TS7SZL", "&mut i32"],
+                "contains_unsafe_block": True,
+                "doc_sections": {"safety": ""},
+            },
+            {
+                "api_id": "api::ffi_fixture::Client::as_db_get",
+                "name": "as_db_get",
+                "canonical_path": "ffi_fixture::Client::as_db_get",
+                "public_anchor_module_id": "mod::ffi_fixture",
+                "owner_type_id": "type::ffi_fixture::Client",
+                "api_kind": "inherent_method",
+                "signature_text": "fn as_db_get(&Self, &mut [u8], &mut i32) -> Result<()>",
+                "receiver": "&Self",
+                "return_type": "Result<()>",
+                "arg_types": ["&mut [u8]", "&mut i32"],
+                "contains_unsafe_block": True,
+                "doc_sections": {"safety": ""},
+            },
+        ],
+        "trait_registry": [],
+        "trait_impl_registry": [],
+        "risk_facts": {"unsafe_functions": [], "ffi_functions": [], "panic_sites": []},
+    }
+
+
+def test_rank_unsafe_targets_omits_targets_with_unresolved_custom_arg_types():
+    knowledge = unnameable_arg_target_knowledge()
+    graph = build_graph(knowledge)
+
+    ranked_ids = [target.api_id for target in rank_unsafe_targets(graph)]
+
+    assert "api::ffi_fixture::Client::as_db_get" in ranked_ids
+    assert "api::ffi_fixture::Client::as_read_szl" not in ranked_ids
+
+
+def test_select_unsafe_target_skips_targets_with_unresolved_custom_arg_types():
+    knowledge = unnameable_arg_target_knowledge()
+    graph = build_graph(knowledge)
+
+    target = select_unsafe_target(graph, round_no=1)
+
+    assert target.api_id == "api::ffi_fixture::Client::as_db_get"

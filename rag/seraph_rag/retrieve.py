@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict, deque
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 
@@ -10,6 +11,96 @@ import networkx as nx
 from seraph_rag.embeddings import build_embedder, embedder_backend_name
 from seraph_rag.documents import api_doc_id
 from seraph_rag.schema import UnsafeTarget
+
+_SIGNATURE_TYPE_KEYWORDS = {
+    "Self",
+    "as",
+    "const",
+    "crate",
+    "dyn",
+    "extern",
+    "fn",
+    "for",
+    "impl",
+    "mut",
+    "pub",
+    "self",
+    "static",
+    "super",
+    "unsafe",
+    "where",
+}
+_SIGNATURE_BUILTIN_TYPE_TOKENS = {
+    "Arc",
+    "BinaryHeap",
+    "Box",
+    "Bound",
+    "CStr",
+    "CString",
+    "Cell",
+    "Cow",
+    "Duration",
+    "HashMap",
+    "HashSet",
+    "Instant",
+    "LinkedList",
+    "ManuallyDrop",
+    "MaybeUninit",
+    "Mutex",
+    "NonNull",
+    "Option",
+    "OsStr",
+    "OsString",
+    "Path",
+    "PathBuf",
+    "PhantomData",
+    "Pin",
+    "Range",
+    "RangeFrom",
+    "RangeFull",
+    "RangeInclusive",
+    "RangeTo",
+    "RangeToInclusive",
+    "Rc",
+    "RefCell",
+    "Result",
+    "RwLock",
+    "String",
+    "UnsafeCell",
+    "Vec",
+    "VecDeque",
+    "bool",
+    "c_char",
+    "c_double",
+    "c_float",
+    "c_int",
+    "c_long",
+    "c_longlong",
+    "c_schar",
+    "c_short",
+    "c_uchar",
+    "c_uint",
+    "c_ulong",
+    "c_ulonglong",
+    "c_ushort",
+    "c_void",
+    "char",
+    "f32",
+    "f64",
+    "i128",
+    "i16",
+    "i32",
+    "i64",
+    "i8",
+    "isize",
+    "str",
+    "u128",
+    "u16",
+    "u32",
+    "u64",
+    "u8",
+    "usize",
+}
 
 
 def unsafe_priority(api_id: str, graph: nx.Graph) -> float:
@@ -39,7 +130,12 @@ def rank_unsafe_targets(
     excluded = excluded or set()
     targets = []
     for node_id, data in graph.nodes(data=True):
-        if data.get("kind") == "api" and data.get("has_unsafe") and node_id not in excluded:
+        if (
+            data.get("kind") == "api"
+            and data.get("has_unsafe")
+            and node_id not in excluded
+            and not target_missing_signature_type_names(graph, node_id)
+        ):
             score = unsafe_priority(node_id, graph)
             targets.append(
                 UnsafeTarget(
@@ -77,6 +173,34 @@ def target_missing_seed_type_ids(graph: nx.Graph, api_id: str) -> List[str]:
 
 def is_target_constructible(graph: nx.Graph, api_id: str) -> bool:
     return not target_missing_seed_type_ids(graph, api_id)
+
+
+def target_missing_signature_type_names(graph: nx.Graph, api_id: str) -> List[str]:
+    if not graph.has_node(api_id):
+        return []
+    api = graph.nodes[api_id]
+    if api.get("kind") != "api":
+        return []
+    arg_types = [str(arg).strip() for arg in (api.get("arg_types") or []) if str(arg).strip()]
+    if not arg_types:
+        return []
+
+    generic_param_names = _generic_param_names(api.get("generic_params") or [])
+    accessible_names: Set[str] = set()
+    for type_id in _graph_neighbor_ids(graph, api_id, "api_accepts_type"):
+        if _graph_type_is_externally_usable(graph, type_id):
+            accessible_names.update(_graph_type_names(graph.nodes[type_id]))
+    for trait_id in _graph_neighbor_ids(graph, api_id, "api_accepts_trait"):
+        if _graph_type_is_publicly_nameable(graph, trait_id):
+            accessible_names.update(_graph_type_names(graph.nodes[trait_id]))
+
+    missing: List[str] = []
+    for arg_type in arg_types:
+        for token in _custom_type_tokens(arg_type, generic_param_names):
+            if token in accessible_names or token in missing:
+                continue
+            missing.append(token)
+    return missing
 
 
 def type_has_public_producer(
@@ -236,12 +360,21 @@ def _render_context_markdown_unbudgeted(
         ),
         "- receiver: {}".format(target_api.get("receiver", "")),
         "- return_shape: {}".format(target_api.get("return_type", "")),
+        "- generic_bounds: {}".format(_api_generic_bounds_display(target_api)),
         "- safety_summary: {}".format((target_api.get("doc_sections") or {}).get("safety", "")),
         "- errors_summary: {}".format((target_api.get("doc_sections") or {}).get("errors", "")),
         "- panics_summary: {}".format((target_api.get("doc_sections") or {}).get("panics", "")),
         "",
-        "## Known Reachable Paths",
     ]
+    target_usage_hints = _collect_target_usage_hints(target_api)
+    if target_usage_hints:
+        lines.extend(["## Target Usage Hints"])
+        for hint in target_usage_hints:
+            lines.append("- `{}`".format(hint))
+        lines.append("")
+    lines.extend([
+        "## Known Reachable Paths",
+    ])
     for entry in visible_setup_entries:
         api = entry["api"]
         lines.append(
@@ -309,6 +442,10 @@ def _render_context_markdown_unbudgeted(
                     ", ".join(item["other_explicit_impls"]) or "(none)",
                 )
             )
+    if compile_hints["output_initializers"]:
+        lines.extend(["", "### Output Initialization Facts"])
+        for item in compile_hints["output_initializers"]:
+            lines.append("- {}: prefer `{}`".format(item["path"], item["statement"]))
     lines.extend([
         "",
         "## Related APIs",
@@ -358,6 +495,49 @@ def _render_context_markdown_unbudgeted(
 
 def _one_line(text: str) -> str:
     return " ".join(text.split())
+
+
+def _collect_target_usage_hints(target_api: Dict[str, Any], max_hints: int = 3) -> List[str]:
+    examples = str((target_api.get("doc_sections") or {}).get("examples") or "").strip()
+    method_name = str(target_api.get("name") or "").strip()
+    if not examples or not method_name or max_hints <= 0:
+        return []
+
+    blocks = _markdown_code_blocks(examples)
+    if not blocks:
+        blocks = [examples]
+
+    hints: List[str] = []
+    seen: Set[str] = set()
+    for block in blocks:
+        raw_lines = [line.strip() for line in block.splitlines() if line.strip()]
+        for index, line in enumerate(raw_lines):
+            if not _line_mentions_method_call(line, method_name):
+                continue
+            setup_line = ""
+            for prev_index in range(index - 1, -1, -1):
+                candidate = raw_lines[prev_index]
+                if candidate.startswith("use ") or candidate.startswith("//") or candidate.startswith("#"):
+                    continue
+                setup_line = candidate
+                break
+            snippet_parts = [part for part in [setup_line, line] if part]
+            snippet = _one_line(" ".join(snippet_parts))
+            if not snippet or snippet in seen:
+                continue
+            seen.add(snippet)
+            hints.append(snippet)
+            if len(hints) >= max_hints:
+                return hints
+    return hints
+
+
+def _markdown_code_blocks(text: str) -> List[str]:
+    return re.findall(r"```(?:[^\n`]*)\n(.*?)```", text, flags=re.DOTALL)
+
+
+def _line_mentions_method_call(line: str, method_name: str) -> bool:
+    return ".{}(".format(method_name) in line or "::{}(".format(method_name) in line
 
 
 def _query_documents(collection, query_text: str, n_results: int, query_embedding) -> List[str]:
@@ -836,6 +1016,8 @@ def _collect_compile_hints(
         accepted_type_ids = _graph_neighbor_ids(graph, api_id, "api_accepts_type")
         relevant_type_ids.update(accepted_type_ids)
         type_trait_candidate_ids.update(accepted_type_ids)
+        if api:
+            relevant_type_ids.update(_where_clause_type_ids(api, knowledge))
         relevant_type_ids.update(_expanded_produced_type_ids(graph, api_id))
         relevant_trait_ids.update(_graph_neighbor_ids(graph, api_id, "api_accepts_trait"))
 
@@ -970,13 +1152,83 @@ def _collect_compile_hints(
             }
         )
 
+    output_initializers = []
+    for type_id in sorted(
+        _target_mut_output_type_ids(target_api, graph, type_index),
+        key=lambda value: _type_display_name(type_index.get(value), value),
+    ):
+        type_info = type_index.get(type_id)
+        if not type_info:
+            continue
+        initializer_expr = _output_initializer_expr(type_info, knowledge, type_index)
+        if not initializer_expr:
+            continue
+        path = _type_display_name(type_info, type_id)
+        if initializer_expr.startswith(path + " {"):
+            statement = "let mut value = {};".format(initializer_expr)
+        else:
+            statement = "let mut value: {} = {};".format(path, initializer_expr)
+        output_initializers.append(
+            {
+                "path": path,
+                "statement": statement,
+            }
+        )
+
     return {
         "imports": imports,
         "traits": traits,
         "trait_methods": trait_methods,
         "enums": enums,
         "type_traits": type_traits,
+        "output_initializers": output_initializers,
     }
+
+
+def _where_clause_type_ids(api: Dict[str, Any], knowledge: Dict[str, Any]) -> Set[str]:
+    matched: Set[str] = set()
+    for clause in api.get("where_clauses", []) or []:
+        matched.update(_matching_type_ids_in_knowledge(str(clause), knowledge))
+    return matched
+
+
+def _matching_type_ids_in_knowledge(type_text: str, knowledge: Dict[str, Any]) -> Set[str]:
+    matched: Set[str] = set()
+    for type_info in knowledge.get("types", []):
+        name = str(type_info.get("name") or "").strip()
+        canonical_path = str(type_info.get("canonical_path") or "").strip()
+        public_paths = [str(path).strip() for path in (type_info.get("public_paths") or []) if str(path).strip()]
+        candidate_names = {
+            name,
+            canonical_path.rsplit("::", 1)[-1].strip(),
+            *[path.rsplit("::", 1)[-1].strip() for path in public_paths],
+        }
+        candidate_names.discard("")
+        if any(_text_mentions_token(type_text, candidate) for candidate in candidate_names):
+            matched.add(type_info["type_id"])
+            continue
+        if canonical_path and canonical_path in type_text:
+            matched.add(type_info["type_id"])
+            continue
+        if any(path and path in type_text for path in public_paths):
+            matched.add(type_info["type_id"])
+    return matched
+
+
+def _text_mentions_token(type_text: str, token: str) -> bool:
+    normalized = (
+        str(type_text)
+        .replace("::", " ")
+        .replace("<", " ")
+        .replace(">", " ")
+        .replace(",", " ")
+        .replace("&", " ")
+        .replace("'", " ")
+        .replace("*", " ")
+        .replace("(", " ")
+        .replace(")", " ")
+    )
+    return token in normalized.split()
 
 
 def _collect_variant_opportunities(
@@ -1119,6 +1371,11 @@ def _api_signature_display(api: Dict[str, Any]) -> str:
     return signature.replace("fn ", "unsafe fn ", 1)
 
 
+def _api_generic_bounds_display(api: Dict[str, Any]) -> str:
+    clauses = [str(clause).strip() for clause in (api.get("where_clauses") or []) if str(clause).strip()]
+    return "; ".join(clauses)
+
+
 def _target_argument_types(api: Dict[str, Any]) -> List[str]:
     structured_arg_types = [str(arg_type).strip() for arg_type in (api.get("arg_types") or []) if str(arg_type).strip()]
     if structured_arg_types:
@@ -1176,6 +1433,235 @@ def _target_argument_types(api: Dict[str, Any]) -> List[str]:
         if normalized:
             extracted.append(normalized)
     return extracted
+
+
+def _target_mut_output_type_ids(
+    target_api: Dict[str, Any],
+    graph: nx.Graph,
+    type_index: Dict[str, Dict[str, Any]],
+) -> List[str]:
+    arg_types = _target_argument_types(target_api)
+    matched: List[str] = []
+    for type_id in _graph_neighbor_ids(graph, target_api["api_id"], "api_accepts_type"):
+        type_info = type_index.get(type_id)
+        if not type_info:
+            continue
+        if any(_arg_type_is_mut_ref_to_type(arg_type, type_info) for arg_type in arg_types):
+            matched.append(type_id)
+    return list(dict.fromkeys(matched))
+
+
+def _arg_type_is_mut_ref_to_type(arg_type: str, type_info: Dict[str, Any]) -> bool:
+    normalized = " ".join(str(arg_type).split())
+    if not normalized.startswith("&mut "):
+        return False
+    candidate_names = {
+        str(type_info.get("name") or "").strip(),
+        *[
+            str(path).rsplit("::", 1)[-1].strip()
+            for path in (type_info.get("public_paths") or [])
+            if str(path).strip()
+        ],
+        str(type_info.get("canonical_path") or "").rsplit("::", 1)[-1].strip(),
+    }
+    candidate_names.discard("")
+    return any(re.search(r"\b{}\b".format(re.escape(name)), normalized) for name in candidate_names)
+
+
+def _output_initializer_expr(
+    type_info: Dict[str, Any],
+    knowledge: Dict[str, Any],
+    type_index: Dict[str, Dict[str, Any]],
+) -> Optional[str]:
+    kind = str(type_info.get("kind") or "")
+    if kind == "type_alias":
+        type_expr = _type_alias_target_expr(type_info, knowledge)
+        if not type_expr:
+            return None
+        return _zero_initializer_for_type_expr(type_expr)
+    if kind != "struct":
+        return None
+    if type_info.get("has_hidden_fields"):
+        return None
+    fields = type_info.get("fields") or []
+    if not fields:
+        return None
+    field_initializers = []
+    for field in fields:
+        field_name = str(field.get("name") or "").strip()
+        if not field_name:
+            return None
+        field_type_expr = _field_type_expr(field, knowledge)
+        if not field_type_expr:
+            return None
+        field_initializer = _zero_initializer_for_type_expr(field_type_expr)
+        if field_initializer is None:
+            return None
+        field_initializers.append("{}: {}".format(field_name, field_initializer))
+    path = _type_display_name(type_info, type_info.get("type_id") or type_info.get("canonical_path") or type_info.get("name") or "")
+    return "{} {{ {} }}".format(path, ", ".join(field_initializers))
+
+
+def _type_alias_target_expr(type_info: Dict[str, Any], knowledge: Dict[str, Any]) -> Optional[str]:
+    code_ref = type_info.get("code_ref") or {}
+    snippet = _read_source_span(
+        knowledge,
+        str(code_ref.get("file") or ""),
+        int(code_ref.get("start_line") or 0),
+        int(code_ref.get("end_line") or 0),
+    )
+    if not snippet:
+        return None
+    line = " ".join(snippet.split())
+    if "=" not in line or ";" not in line:
+        return None
+    return line.split("=", 1)[1].rsplit(";", 1)[0].strip()
+
+
+def _field_type_expr(field: Dict[str, Any], knowledge: Dict[str, Any]) -> Optional[str]:
+    type_text = str(field.get("type_text") or "").strip()
+    if type_text and "_" not in type_text:
+        return type_text
+    source = field.get("source") or {}
+    snippet = _read_source_span(
+        knowledge,
+        str(source.get("file") or ""),
+        int(source.get("start_line") or 0),
+        int(source.get("end_line") or 0),
+    )
+    if not snippet:
+        return type_text or None
+    line = " ".join(snippet.split())
+    if ":" not in line:
+        return type_text or None
+    return line.split(":", 1)[1].rstrip(",").strip()
+
+
+def _zero_initializer_for_type_expr(type_expr: str) -> Optional[str]:
+    normalized = " ".join(str(type_expr).strip().rstrip(",").split())
+    if not normalized:
+        return None
+    array_parts = _split_array_type_expr(normalized)
+    if array_parts is not None:
+        element_expr, length_expr = array_parts
+        element_initializer = _zero_initializer_for_type_expr(element_expr)
+        if element_initializer is None:
+            return None
+        return "[{}; {}]".format(element_initializer, _normalize_array_length(length_expr))
+    scalar = normalized.replace(" ", "")
+    if scalar == "bool":
+        return "false"
+    if _is_zero_float_type(scalar):
+        return "0.0"
+    if _is_zero_scalar_type(scalar):
+        return "0"
+    return None
+
+
+def _split_array_type_expr(type_expr: str) -> Optional[tuple[str, str]]:
+    if not (type_expr.startswith("[") and type_expr.endswith("]")):
+        return None
+    inner = type_expr[1:-1]
+    depth = 0
+    for index, char in enumerate(inner):
+        if char in "[<(":
+            depth += 1
+        elif char in "]>)":
+            depth = max(0, depth - 1)
+        elif char == ";" and depth == 0:
+            return inner[:index].strip(), inner[index + 1 :].strip()
+    return None
+
+
+def _normalize_array_length(length_expr: str) -> str:
+    normalized = " ".join(length_expr.split())
+    if re.fullmatch(r"\d+[A-Za-z0-9_]*", normalized):
+        return re.sub(r"[A-Za-z_][A-Za-z0-9_]*$", "", normalized)
+    return normalized
+
+
+def _is_zero_float_type(type_expr: str) -> bool:
+    return type_expr in {"f32", "f64"} or type_expr.endswith("::c_float") or type_expr.endswith("::c_double")
+
+
+def _is_zero_scalar_type(type_expr: str) -> bool:
+    builtin_scalars = {
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "u128",
+        "usize",
+        "i8",
+        "i16",
+        "i32",
+        "i64",
+        "i128",
+        "isize",
+    }
+    alias_scalars = {
+        "byte",
+        "word",
+        "longword",
+        "shortint",
+        "smallint",
+        "integer",
+        "longint",
+        "char",
+    }
+    return (
+        type_expr in builtin_scalars
+        or type_expr.lower() in alias_scalars
+        or type_expr.endswith("::c_char")
+        or type_expr.endswith("::c_schar")
+        or type_expr.endswith("::c_uchar")
+        or type_expr.endswith("::c_short")
+        or type_expr.endswith("::c_ushort")
+        or type_expr.endswith("::c_int")
+        or type_expr.endswith("::c_uint")
+        or type_expr.endswith("::c_long")
+        or type_expr.endswith("::c_ulong")
+        or type_expr.endswith("::c_longlong")
+        or type_expr.endswith("::c_ulonglong")
+    )
+
+
+def _read_source_span(
+    knowledge: Dict[str, Any],
+    source_file: str,
+    start_line: int,
+    end_line: int,
+) -> str:
+    if not source_file or start_line <= 0 or end_line <= 0 or end_line < start_line:
+        return ""
+    resolved = _resolve_source_path(knowledge, source_file)
+    if resolved is None or not resolved.exists():
+        return ""
+    lines = _read_source_lines(str(resolved))
+    start_index = max(start_line - 1, 0)
+    end_index = min(end_line, len(lines))
+    return "\n".join(lines[start_index:end_index])
+
+
+def _resolve_source_path(knowledge: Dict[str, Any], source_file: str) -> Optional[Path]:
+    if not source_file:
+        return None
+    path = Path(source_file)
+    if path.is_absolute():
+        return path
+    crate_meta = knowledge.get("crate_meta") or {}
+    manifest_path = crate_meta.get("manifest_path")
+    if manifest_path:
+        return Path(manifest_path).resolve().parent / path
+    lib_rs_path = crate_meta.get("lib_rs_path")
+    if lib_rs_path:
+        return Path(lib_rs_path).resolve().parent.parent / path
+    return path
+
+
+@lru_cache(maxsize=128)
+def _read_source_lines(path: str) -> List[str]:
+    return Path(path).read_text(encoding="utf-8", errors="ignore").splitlines()
 
 
 def _trait_method_impl_signature(api: Dict[str, Any]) -> str:
@@ -1266,6 +1752,59 @@ def _api_has_constructible_seed_chain(
         )
         for seed_type_id in seed_type_ids
     )
+
+
+def _generic_param_names(generic_params: List[Any]) -> Set[str]:
+    names: Set[str] = set()
+    for item in generic_params:
+        if isinstance(item, dict):
+            candidate = item.get("name") or item.get("param") or item.get("text") or ""
+        else:
+            candidate = str(item)
+        token = str(candidate).split(":", 1)[0].split("=", 1)[0].strip()
+        if token:
+            names.add(token)
+    return names
+
+
+def _custom_type_tokens(type_text: str, generic_param_names: Set[str]) -> List[str]:
+    tokens: List[str] = []
+    for token in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", type_text):
+        if token in _SIGNATURE_TYPE_KEYWORDS or token in generic_param_names:
+            continue
+        if token in _SIGNATURE_BUILTIN_TYPE_TOKENS:
+            continue
+        if not _looks_like_custom_type_token(token):
+            continue
+        if token not in tokens:
+            tokens.append(token)
+    return tokens
+
+
+def _looks_like_custom_type_token(token: str) -> bool:
+    return any(char.isupper() for char in token)
+
+
+def _graph_type_is_externally_usable(graph: nx.Graph, type_id: str) -> bool:
+    return _graph_type_is_publicly_nameable(graph, type_id) or type_has_public_producer(graph, type_id)
+
+
+def _graph_type_is_publicly_nameable(graph: nx.Graph, node_id: str) -> bool:
+    if not graph.has_node(node_id):
+        return False
+    node = graph.nodes[node_id]
+    return bool(node.get("public_paths") or node.get("public_anchor_module_id"))
+
+
+def _graph_type_names(node: Dict[str, Any]) -> Set[str]:
+    names = {str(node.get("name") or "").strip()}
+    path = str(node.get("path") or "").strip()
+    if path:
+        names.add(path.rsplit("::", 1)[-1].strip())
+    for public_path in node.get("public_paths") or []:
+        names.add(str(public_path).rsplit("::", 1)[-1].strip())
+    names.discard("")
+    return names
 
 
 def _setup_entry_basis(

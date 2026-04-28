@@ -1080,3 +1080,1375 @@
     - Rust type-trait facts 缺失
     - 导致 LLM 首轮与修复轮都沿着错误的 ownership 假设前进
     - 进而说明为什么 SERAPH 需要把 Rust 编译期事实进一步上升为 prompt / context 的显式约束
+
+### 9.2 FFI 输出参数缺少“可合法初始化事实”导致 `zeroed` / `MaybeUninit` 被 guard 拦住后又退化成 `Default`
+
+- **出现位置**：
+  - 原 clean full workspace：`/tmp/seraph-snap7rs-full-openai-r7-20260426-200101`
+  - 首批卡住 target：
+    - `api::snap7_rs::client::S7Client::get_cp_info`
+    - `api::snap7_rs::client::S7Client::get_cpu_info`
+    - `api::snap7_rs::client::S7Client::get_order_code`
+    - `api::snap7_rs::client::S7Client::get_protection`
+    - `api::snap7_rs::client::S7Client::list_blocks_of_type`
+- **现象**：
+  - 首轮 harness 面对这些 `&mut` 输出参数时，倾向于写：
+    - `std::mem::zeroed()`
+    - `MaybeUninit::zeroed().assume_init()`
+  - 但 compile-check 的 semantic guard 会把这类“凭空伪造状态”的写法拦下。
+  - 被拦下后，fix-loop 又常退化成另一条错误恢复路径：
+    - 对 `TS7CpInfo` / `TS7CpuInfo` / `TS7OrderCode` / `TS7Protection` 猜测 `::default()` 或 `Default::default()`
+    - 对 `TS7BlocksOfType` 猜测大数组 `Default`
+  - 于是原始 full run 中持续出现：
+    - `E0599: no function or associated item named 'default' found`
+    - `E0277: the trait bound ...: Default is not satisfied`
+- **Rust / FFI 特性**：
+  - 这批类型并不是需要“复杂 setup chain 才能存在”的 opaque owner state。
+  - 它们本质上是 FFI 输出缓冲：
+    - `TS7CpInfo` / `TS7Protection` 这类纯整数字段 struct
+    - `TS7CpuInfo` / `TS7OrderCode` 这类 `c_char` 定长数组 + 标量字段 struct
+    - `TS7BlocksOfType = [word; 8192]` 这类大定长数组 type alias
+  - 在 Rust 里，这类类型常常没有 `Default`，而且直接用 `mem::zeroed` / `MaybeUninit` 又会触发我们为 honest harness 引入的 semantic guard。
+  - 因此真正缺的不是“模型想不到 unsafe 技巧”，而是：
+    - context 没把“这个输出类型应该如何用公开、可编译、可审计的 Rust 字面量初始化”明确讲出来。
+- **库侧事实**：
+  - `snap7-rs` 源码本身已经给出足够证据：
+    - `TS7BlocksOfType` 在 `src/ffi.rs` 中是：
+      - `pub type TS7BlocksOfType = [word; 8192usize];`
+    - `TS7CpuInfo` / `TS7CpInfo` / `TS7OrderCode` / `TS7Protection` 的字段也都在 `src/ffi.rs` 中公开可见
+    - `list_blocks_of_type` 文档示例还明确写了：
+      - `let mut buff: TS7BlocksOfType = [0; 8192];`
+- **根因**：
+  - 旧 `Compile-Time Facts` 只暴露了：
+    - import path
+    - enum variants
+    - `Type Trait Facts`
+  - 但没有暴露：
+    - 对 `&mut` 输出参数，哪一个初始化字面量是 factual 且 compile-friendly 的
+  - 结果模型虽然知道“这是一个 `Copy` struct / alias”，却不知道：
+    - 应该写结构体字面量
+    - 还是写定长数组字面量
+    - 还是直接早退
+  - 被 semantic guard 阻断 unsafe 初始化后，就自然漂移到 `Default` 幻觉。
+- **已落地修复**：
+  - `Phase 2 / retrieve.py`
+    - 在 `Compile-Time Facts` 中新增 `Output Initialization Facts`
+    - 对 target 的 `&mut` 输出参数，基于 extract 的类型定义与源码行恢复，合成 factual initializer，例如：
+      - `snap7_rs::TS7CpInfo { MaxPduLengt: 0, MaxConnections: 0, MaxMpiRate: 0, MaxBusRate: 0 }`
+      - `snap7_rs::TS7CpuInfo { ModuleTypeName: [0; 33], ... }`
+      - `let mut value: snap7_rs::TS7BlocksOfType = [0; 8192];`
+  - `Phase 3 / harness prompt`
+    - 新增明确规则：
+      - 如果 `Output Initialization Facts` 已给出具体 initializer，就优先使用它
+      - 不要再猜 `Default`、`mem::zeroed` 或 `MaybeUninit`
+  - `Phase 3 / compile fixer bundle`
+    - 新增同样的修复式约束：
+      - 若 context 已给出输出初始化事实，修复时应沿这条 factual 路径收敛
+- **修复后真实 rerun**：
+  - `get_cp_info`：`/tmp/seraph-snap7rs-rerun-get-cp-info-20260426`
+    - 结果：`validated`
+    - 生成 harness 直接写出：
+      - `TS7CpInfo { MaxPduLengt: 0, MaxConnections: 0, MaxMpiRate: 0, MaxBusRate: 0 }`
+  - `get_cpu_info`：`/tmp/seraph-snap7rs-rerun-get-cpu-info-20260426`
+    - 结果：`validated`
+    - 生成 harness 直接写出：
+      - `TS7CpuInfo { ModuleTypeName: [0; 33], SerialNumber: [0; 25], ... }`
+  - `get_protection`：`/tmp/seraph-snap7rs-rerun-get-protection-20260426`
+    - 结果：`validated`
+    - 生成 harness 直接写出：
+      - `TS7Protection { sch_schal: 0, sch_par: 0, sch_rel: 0, bart_sch: 0, anl_sch: 0 }`
+  - `list_blocks_of_type`：`/tmp/seraph-snap7rs-rerun-list-blocks-of-type-20260426`
+    - 结果：`validated`
+    - 生成 harness 直接写出：
+      - `let mut blocks: TS7BlocksOfType = [0; 8192];`
+  - `get_order_code`：`/tmp/seraph-snap7rs-rerun-get-order-code-20260426`
+    - 结果：`validated`
+    - 首轮已正确使用：
+      - `TS7OrderCode { Code: [0; 21], V1: 0, V2: 0, V3: 0 }`
+    - 后续两个变体仍因把 `u8` 字段当成 `i32` / 把 `[i8]` 与 `[u8]` 混用而触发普通 Rust 类型错误
+    - 但这些已属于 compile-fixable 的常规类型收敛问题，而不再是“输出参数无法 honest 初始化”的系统性缺口
+- **结论**：
+  - 这轮 `snap7-rs` 没有暴露目标库 bug。
+  - 它暴露的是另一个非常典型的 Rust/FFI harness 生成难点：
+    - 不是所有可写输出类型都应该走 setup chain
+    - 但如果工具不显式提供“合法初始化事实”，LLM 就会在 honest guard 约束下退化到 `Default` 幻觉或 unsafe 初始化技巧
+  - 因而 SERAPH 需要同时表达两类事实：
+    - 对 opaque owner / borrowed wrapper：给出 reachability 与 setup chain
+    - 对 plain FFI output buffer：给出 compile-facing initializer facts
+  - 这也说明 Rust 真实 harness synthesis 的难点，不只是 ownership，还包括：
+    - type layout
+    - fixed-size array literal construction
+    - `c_char` / integer FFI field 的 compile-facing初始化策略
+
+### 9.3 Public API 签名引用私有 FFI 类型，导致目标“表面公开但对外不可命名”，旧 target ranking 仍错误纳入全量测试
+
+- **出现位置**：
+  - 原 full workspace：`/tmp/seraph-snap7rs-full-openai-r7-20260426-200101`
+  - 首次暴露的 target：
+    - `api::snap7_rs::client::S7Client::as_read_szl`
+    - `api::snap7_rs::client::S7Client::as_read_szl_list`
+  - 同类同步命中的 target：
+    - `api::snap7_rs::client::S7Client::read_szl`
+    - `api::snap7_rs::client::S7Client::read_szl_list`
+- **现象**：
+  - `as_read_szl` 首轮 harness 直接本地伪造了一个同名 `TS7SZL` 结构体，随后 compile 失败：
+    - `expected snap7_rs::ffi::TS7SZL, found TS7SZL`
+  - fix-loop 再继续漂移到另一类幻觉：
+    - 猜 `use snap7_rs::{ffi::TS7SZL, S7Client};`
+    - 猜 `snap7_rs::ffi::TS7SZLHeader`
+    - 猜 `MaybeUninit` / `zeroed`
+  - 于是进一步得到：
+    - `E0603: module ffi is private`
+    - `E0422: cannot find TS7SZLHeader in snap7_rs::ffi`
+  - `as_read_szl_list` 的首轮错误则更直接：
+    - `cannot find type TS7SZLList in crate snap7_rs`
+- **Rust 特性根因**：
+  - 这不是普通“setup chain 不够长”的问题，而是 Rust 可见性模型导致的 compile-facing interface 缺口：
+    - `snap7-rs` 的 public method 签名里出现了 `TS7SZL` / `TS7SZLList`
+    - 但这两个类型定义在私有模块 `ffi`
+    - crate 根 `src/lib.rs` 并没有像 `TS7CpInfo` / `TS7CpuInfo` 那样把它们 `pub use` 出来
+  - 结果就是：
+    - API 从文档和抽象知识上看“公开存在”
+    - 但外部 harness crate 无法用 honest Rust 路径命名和构造这些参数类型
+  - 这是非常 Rust-specific 的问题：
+    - 方法可见性
+    - 私有模块类型
+    - re-export 缺失
+    - 外部 crate 的 compile-facing 可命名性
+    - 这几层一起决定了“目标是否真的可 fuzz”
+- **工具旧缺口**：
+  - 旧 `rank_unsafe_targets` 只看：
+    - unsafe / ffi / panic signal
+    - seed owner type 是否可通过 public producer 构造
+  - 但它没有检查：
+    - target 参数签名中出现的自定义类型，是否真的在知识图里有可解析实体
+    - 这些实体是否对外可命名，或者至少能通过 public producer 间接得到
+  - 因此这 4 个 `SZL` 相关 target 虽然对外不可 honest 调用，仍被排进了全量 run。
+- **extract / RAG 证据**：
+  - `knowledge.json` 中对 `TS7SZL` / `TS7SZLList` 的搜索命中数为 `0`
+  - 相应 RAG context 中：
+    - target signature 仍写着 `&mut TS7SZL` / `&mut TS7SZLList`
+    - 但 `Compile-Time Facts -> Exact Import Paths` 只有 `S7Client`
+    - 没有对应参数类型的 public import path
+  - 这说明 extract 已经把“不可公开命名”的事实反映成了知识缺口，但旧 ranking 没消费这层信号。
+- **已落地修复**：
+  - `graph_builder.py`
+    - 将 API 的 `arg_types` / `generic_params` 与 type/trait 的公开可见性元信息带入 graph node
+  - `retrieve.py`
+    - 新增对 target 参数签名的 compile-facing 检查
+    - 对每个参数类型文本提取自定义类型 token
+    - 若该 token：
+      - 既无法在知识图中解析到可用 type/trait
+      - 也没有 public producer 作为间接构造路径
+      - 就直接把该 target 视为“对外不可调用”，从 `rank_unsafe_targets` 里剔除
+  - 这样做的关键点不是“猜私有类型怎么构造”，而是：
+    - 在目标选择阶段就诚实承认这类 public-looking API 对外不可 fuzz
+- **修复后真实验证**：
+  - 基于真实 `snap7-rs` knowledge 重新 ranking：
+    - `api::snap7_rs::client::S7Client::as_read_szl` -> `in_rank = False`, `missing = ['TS7SZL']`
+    - `api::snap7_rs::client::S7Client::as_read_szl_list` -> `in_rank = False`, `missing = ['TS7SZLList']`
+    - `api::snap7_rs::client::S7Client::read_szl` -> `in_rank = False`, `missing = ['TS7SZL']`
+    - `api::snap7_rs::client::S7Client::read_szl_list` -> `in_rank = False`, `missing = ['TS7SZLList']`
+  - 修复后的 ranked list 在原 round 52-55 后直接变成：
+    - `56 as_tm_read`
+    - `57 as_tm_write`
+    - `58 check_as_completion`
+    - 不再进入 `SZL` 相关 target
+- **结论**：
+  - 这轮 `snap7-rs` 仍然没有暴露目标库 bug；
+  - 但它暴露了一个很适合写进论文的 Rust 工具设计问题：
+    - “public API 是否可 fuzz” 不能只看函数自身可见性和 owner setup chain
+    - 还必须检查参数类型在外部 crate 里是否真实可命名、可获得、可编译
+  - 对 Rust 而言，这是一类典型的语言级 compile-facing 事实：
+    - re-export 是否存在
+    - 私有模块类型是否泄漏到 public method signature
+    - 知识图中能否解析出对应实体
+  - SERAPH 对这类 Rust 特性的改进，不是让 LLM 更会猜私有类型，而是更早、更硬地避免把不可 honest 调用的目标送进 harness synthesis 流程。
+
+### 9.4 `connect_to` 变体出现输入切片越界，暴露了 harness 前置解析逻辑的边界健壮性缺口
+
+- **出现位置**：
+  - workspace：`/tmp/seraph-snap7rs-full-openai-r7-postskip-20260426-210208`
+  - round `62`
+  - target：`api::snap7_rs::client::S7Client::connect_to`
+  - 触发变体：`harness_062_03.rs`
+- **现象**：
+  - compile `3 / 3 ok`
+  - 但 smoke 中第 3 个变体直接 panic：
+    - `range start index 1 out of range for slice of length 0`
+  - runtime diagnosis 明确给出：
+    - panic 发生在真正调用 `S7Client::connect_to` 之前
+    - 根因是 harness 在空输入上计算第二个 `NUL` 分隔符时，直接取了 `data[1..]`
+- **触发代码形状**：
+  - 该变体把输入解释为：
+    - `ip_bytes \0 rack_ascii \0 slot_ascii`
+  - 关键问题在于：
+    - `first_nul = data.iter().position(...).unwrap_or(data.len())`
+    - 对空输入时 `first_nul == 0`
+    - 随后直接切 `data[first_nul.saturating_add(1)..]`
+    - 也就是 `data[1..]`，导致空切片越界
+- **性质判断**：
+  - 这不是目标库 bug
+  - 这是 harness 自身输入预处理逻辑缺少基本边界保护
+  - 它说明即便目标调用部分是 honest 的，前置 fuzz input decoding 仍然可能凭空制造 panic，从而污染真实库测试结论
+- **为什么值得记录**：
+  - 这是一个典型的“Rust 解析代码容易写得看似安全、实则仍会在切片边界上 panic”的案例
+  - 对论文来说，它很好地说明了：
+    - Rust harness 生成不只是“能不能调用 API”
+    - 还包括 fuzz input decoding 本身的边界安全
+  - 如果这类解析 panic 不被区分，会把 harness bug 误记成 target bug
+- **当前处理状态**：
+  - runtime diagnosis 已正确将其分类为：
+    - `bug = false`
+    - `summary = harness input-handling bug, not a bug in the target API`
+  - 也就是说，当前诊断链路对“目标前 panic”已有一定分辨能力
+  - 但 prompt / generation 侧仍值得后续加强：
+    - 对分隔符解析、切片截取、`split_at`/`get` 风格的边界保护约束
+
+### 9.5 `ab_write -> db_write` 在未连接 `S7Client` 上触发进程异常退出，疑似真实库 / FFI 状态序列 bug
+
+- **出现位置**：
+  - workspace：`/tmp/seraph-snap7rs-full-openai-r7-postskip-20260426-210208`
+  - round `69`
+  - target：`api::snap7_rs::client::S7Client::db_write`
+  - 触发变体：`harness_069_02.rs`
+- **现象**：
+  - compile `3 / 3 ok`
+  - smoke 中：
+    - 变体 1：`ok`
+    - 变体 2：`bug`
+    - 变体 3：`ok`
+  - 失败变体的 stdout 为：
+    - `SERAPH_STEP_ENTER:1:api::snap7_rs::client::S7Client::ab_write`
+    - `SERAPH_STEP_ENTER:2:api::snap7_rs::client::S7Client::db_write`
+  - 随后进程直接以 `exit code 245` 退出
+  - 没有 Rust panic 文本，也没有 ASan 报告
+- **Phase 1 根因调查结果**：
+  - 变体 2 的核心执行序列是：
+    - fresh `S7Client::create()`
+    - `ab_write(start=0, size=1, payload=[0])`
+    - `db_write(db_number=0, start=0, size=1, payload=[0])`
+  - 我做了最小对比复现：
+    - `db_write(0, 0, 1, &mut [0])` 单独调用：**不会崩**
+    - `as_db_write(... ) -> db_write(...)`：**不会崩**
+    - `ab_write(... ) -> db_write(...)`：**会崩**
+  - 这说明问题不只是“未连接 client 上调用 db_write”
+  - 更像是：
+    - 某个特定前置写 API 调用了底层 FFI 路径
+    - 之后再走 `db_write` 时触发了异常退出
+- **性质判断**：
+  - 这轮证据更支持“真实库 / FFI 状态序列问题”，而不是 harness 自己的输入解析 bug
+  - 原因是：
+    - 目标已经被真正进入
+    - 同一 target 在其他变体下可正常返回
+    - 仅特定前置状态推进组合触发进程异常终止
+  - 即使库作者认为“未连接状态下这些 API 不应这么调用”，一个更健壮的 Rust 包装通常也应返回 `Err`，而不是直接把进程打掉
+- **为什么有论文价值**：
+  - 这正好体现了 SERAPH 当前 prompt 设计里“related API + state progression”带来的收益
+  - 如果 harness 只会做单点调用：
+    - 这个序列相关问题未必会暴露
+  - 但当 harness 开始组合：
+    - same-owner related APIs
+    - 不同同步 / 异步写接口
+    - 再回到 target
+    - 就能把底层状态机 / FFI 交互路径中的异常暴露出来
+  - 这可以作为论文中“Rust harness synthesis 不只是构造参数，还要探索 owner state / API sequence”的一个正向案例
+- **当前状态**：
+  - 暂记为真实 bug 候选
+  - 现有最小证据已经能说明：
+    - 崩溃与 `ab_write -> db_write` 的顺序相关
+    - 不是 `db_write` 单独调用的必然结果
+  - 若后续需要对外报告，可再补：
+    - 独立最小 repro
+    - 是否在不同输入长度 / `db_number` / `start` 下仍可稳定复现
+
+### 9.6 Callback 泛型约束未直接暴露给 Target API，导致首轮回调签名频繁猜错；补充 `generic_bounds` 后首轮 3/3 compile
+
+- **出现位置**：
+  - target：`api::snap7_rs::client::S7Client::set_as_callback`
+  - 相关 real rerun：
+    - 旧 rerun：`/tmp/seraph-snap7rs-rerun-set-as-callback-20260426`
+    - 新 rerun：`/tmp/seraph-snap7rs-rerun-set-as-callback-bounds-20260426`
+- **旧现象**：
+  - 旧 context 的 `Target API` 只写：
+    - `fn set_as_callback(&Self, Option<F>) -> Result<()>`
+  - 但没有直接把：
+    - `F: FnMut(*mut c_void, c_int, c_int) + 'static`
+    - 这条约束挂在 target 自身上
+  - 结果首轮 harness 频繁生成错误 callback 签名，例如：
+    - `fn(*mut c_void, i32)`
+    - 两参数 callback 函数
+  - 旧 rerun 结果：
+    - 首轮 compile：`0 / 3 ok`
+    - 三个变体全部进入 fix-loop
+    - fix-loop 全部能修回正确 3 参数 callback，最终 smoke `3 / 3 ok`
+- **根因**：
+  - `where_clauses` 虽然存在于 extract 产物中，
+  - 但 retrieve 渲染的 `Target API` 区域没有把它显式暴露给模型
+  - 对 callback API 来说，这比普通泛型更致命：
+    - 一旦 arity 猜错，Rust 编译器立即报 trait bound / function arity mismatch
+  - 这说明对 Rust 来说，target 自身的 compile-facing type facts 不应只停留在 `Option<F>` 这种抽象层面
+- **已落地修复**：
+  - retrieve 在 `## Target API` 中新增：
+    - `- generic_bounds: ...`
+  - 例如 `set_as_callback` 现在会直接显示：
+    - `F: FnMut(*mut c_void, c_int, c_int) + 'static`
+  - 另一个同步修复是：
+    - semantic guard 现在能识别 `method::<...>(...)` 这种 turbofish 调用，不会再把真实 target call 误判成“markers 之间没有调用”
+- **修复后对照验证**：
+  - 新 rerun workspace：
+    - `/tmp/seraph-snap7rs-rerun-set-as-callback-bounds-20260426`
+  - 结果：
+    - compile：`3 / 3 ok`
+    - fix-loop request：`0`
+    - smoke：`3 / 3 ok`
+  - 当前整合规则 rerun workspace：
+    - `/tmp/seraph-snap7rs-rerun-set-as-callback-current-20260426-225122`
+  - 结果：
+    - compile：`3 / 3 ok`
+    - fix-loop request：`0`
+    - smoke：`3 / 3 ok`
+  - 这提供了一个非常直接的前后对照：
+    - 不是模型“随机刚好答对了”
+    - 而是 target generic bounds 被显式暴露后，首轮 harness 已能稳定生成正确 callback 形状
+- **论文价值**：
+  - 这是一个典型 Rust-specific compile-facing事实案例：
+    - generics + trait bounds
+    - callback arity
+    - FFI callback type shape
+  - 也说明 SERAPH 的 RAG 不能只提供“target 名称 + 参数文本”
+  - 对 Rust 泛型 API，`where` 约束本身就是首轮可编译性的核心事实
+
+### 9.7 callback raw-pointer pointee 不可公开命名时，首轮/修复轮都需要保留 Rust 类型推断，而不是猜 `()` 或私有路径
+
+- **出现位置**：
+  - target：`api::snap7_rs::server::S7Server::set_rw_area_callback`
+  - 原 full run workspace：
+    - `/tmp/seraph-snap7rs-full-openai-r7-postskip-20260426-210208`
+  - 修复后定点 rerun workspace：
+    - `/tmp/seraph-snap7rs-rerun-set-rw-area-callback-20260426-215802`
+- **旧现象**：
+  - target context 已经显示：
+    - `fn set_rw_area_callback(&Self, Option<F>) -> Result<()>`
+    - `generic_bounds: F: FnMut(*mut c_void, c_int, c_int, *mut TS7Tag, *mut c_void)`
+  - 但 `Compile-Time Facts -> Exact Import Paths` 里只有：
+    - `snap7_rs::S7Server`
+  - 首轮两个失败变体把 callback 第四个参数直接写成：
+    - `*mut ()`
+  - 于是 `rustc` 立即报 `E0631`：
+    - 期望 `*mut snap7_rs::ffi::TS7Tag`
+    - 实际生成成了 `*mut ()`
+  - 更糟的是，旧 fix-loop 继续沿着另一条错误恢复路径漂移：
+    - 试图显式写 `snap7_rs::ffi::TS7Tag`
+    - 但 `ffi` 模块对下游 harness 是私有的
+  - 原结果：
+    - compile：`1 / 3 ok`
+    - fix-loop 成功：`0`
+    - smoke：`1 / 3 ok`
+- **Rust 特性**：
+  - 这是一个很 Rust-specific 的 callback / FFI 表达问题：
+    - public API 的泛型约束里可以出现 raw-pointer pointee 事实
+    - 但这个 pointee 类型本身未必有下游可写的 public import path
+  - 在这种情况下，外部 honest harness 仍然可以合法调用 API，
+    - 但应该依赖 Rust 类型推断：
+      - closure 参数写 `_tag: *mut _`
+      - `None` 分支写 `fn(*mut c_void, c_int, c_int, *mut _, *mut c_void)`
+  - 也就是说，这不是“缺少更多幻想路径”能解决的问题，
+    - 而是必须显式教模型保留 inference，而不是擅自 concretize 成 `()` 或私有模块路径。
+- **根因分析**：
+  - 这次并不适合简单归因为“extract 漏了 `TS7Tag`”：
+    - `TS7Tag` 在 `snap7-rs` 里位于私有 `ffi` 模块
+    - 它本来就不是一个应该直接鼓励 harness 去 `use` 的 public surface type
+  - 真正的工具缺口有两层：
+    - Phase 3 prompt / compile-fixer 没有把“callback raw-pointer pointee 拿不准时优先保留 `*mut _` / `*const _` 推断”写成硬约束
+    - Phase 2 compile facts 也没有把“仅出现在 target generic bounds 里的公开类型”补进 `Exact Import Paths`
+      - 这会影响类似 `TSrvEvent` 这种实际上有 public path 的 callback pointee
+- **已落地修复**：
+  - `Phase 2 / retrieve.py`
+    - `Compile-Time Facts` 现在会把 target `where_clauses` / `generic_bounds` 中提到的公开类型也补进 `Exact Import Paths`
+    - 这样像 `TSrvEvent` 这类“只在 callback bound 中出现”的 public type，不会再被遗漏
+  - `Phase 3 / harness prompt`
+    - 新增明确规则：
+      - callback / function-pointer generic bounds 必须保留 context 给出的精确参数个数与顺序
+      - 如果 raw-pointer pointee 没出现在 `Exact Import Paths`，优先写 `*mut _` / `*const _` / closure 参数 `_`
+      - 不要把 pointee 擅自改成 `()`，也不要猜私有路径
+  - `Phase 3 / compile fixer bundle`
+    - 同步加入同一条 callback inference 规则
+    - 避免 fix-loop 再把 `rustc` 诊断里的内部路径机械抄回 harness
+- **修复后真实 rerun**：
+  - workspace：
+    - `/tmp/seraph-snap7rs-rerun-set-rw-area-callback-20260426-215802`
+  - 结果：
+    - compile：`3 / 3 ok`
+    - fix-loop request：`0`
+    - smoke：`3 / 3 ok`
+  - 新生成 harness 的关键变化非常直接：
+    - `Some(...)` callback 分支使用 `_tag: *mut _`
+    - `None` turbofish 分支使用 `fn(*mut c_void, c_int, c_int, *mut _, *mut c_void)`
+    - 没有再出现 `*mut ()`
+    - 也没有再出现 `snap7_rs::ffi::TS7Tag`
+- **额外对照验证：公开 pointee path 也得到改善**
+  - workspace：
+    - `/tmp/seraph-snap7rs-rerun-set-read-events-callback-20260426-220500`
+  - target：
+    - `api::snap7_rs::server::S7Server::set_read_events_callback`
+  - 新 context 现在会直接显示：
+    - `type::snap7_rs::ffi::TSrvEvent => snap7_rs::TSrvEvent [kind=type]`
+  - 结果：
+    - compile：`3 / 3 ok`
+    - fix-loop request：`0`
+    - smoke：`3 / 3 ok`
+  - 新 harness 直接稳定写出：
+    - `*mut snap7_rs::TSrvEvent`
+  - 这说明这次修复不是只对 `TS7Tag` 这种“必须保留推断”的私有 pointee 有效，
+    - 对 `TSrvEvent` 这种“确实存在 public import path”的 callback pointee 也同样提高了首轮 through-rate
+- **论文价值**：
+  - 这是一个很适合写进论文的 Rust 专有案例：
+    - callback trait bound 中的 raw-pointer pointee
+    - public surface 与 private FFI module 的张力
+    - Rust 类型推断在 honest harness synthesis 中的必要性
+  - 它说明 SERAPH 不能只做“更多 context = 更好”这种粗粒度增强
+  - 更关键的是把 Rust 特有的“什么时候应该保留 inference、什么时候才能 concretize 类型”转成 prompt / fixer 的显式设计
+
+### 9.9 保留 raw-pointer pointee 推断时，还必须遵守 Rust 对 `_` 占位类型的语法位置限制
+
+- **出现位置**：
+  - target：`api::snap7_rs::server::S7Server::set_rw_area_callback`
+  - 已有 callback-inference 修复后的当前 rerun：
+    - `/tmp/seraph-snap7rs-rerun-set-rw-area-callback-current-20260426-225251`
+- **现象**：
+  - 在这次 rerun 里，前两个变体已经能正确使用：
+    - closure 参数 `_tag: *mut _`
+    - turbofish `fn(*mut c_void, c_int, c_int, *mut _, *mut c_void)`
+  - 但第三个变体把同一条“保留推断”规则错误地扩展到了命名函数 item：
+    - `fn rw_cb(..., _tag: *mut _, ...)`
+  - `rustc` 直接报：
+    - `E0121: the placeholder '_' is not allowed within types on item signatures for functions`
+  - 因而当时结果是：
+    - compile index：`failed`
+    - fix-loop：`1` 个请求，`1` 次成功修复
+    - smoke：`3 / 3 ok`
+- **Rust 特性根因**：
+  - 这不是 callback pointee 事实缺失，也不是私有类型可见性问题。
+  - 真正的细粒度 Rust 约束是：
+    - `_` 占位类型可以出现在某些推断友好的位置
+      - 例如 closure 参数推断
+      - turbofish / cast 的 call-site 位置
+    - 但不能直接写进命名 `fn` item 的参数类型签名
+  - 换句话说，SERAPH 之前已经学会了：
+    - “不要把私有 pointee 硬 concretize 成错误路径或 `()`”
+  - 但还没有学会更细的一层：
+    - “保留 inference 也必须 obey Rust 对不同语法位置的合法性约束”
+- **旧 fix-loop 如何救回**：
+  - 修复后的 harness 没再写非法的：
+    - `fn rw_cb(..., _tag: *mut _, ...)`
+  - 而是改成 generic helper：
+    - `fn rw_cb<T>(..., _tag: *mut T, ...)`
+    - 再在 call site 保持：
+      - `rw_cb::<_> as fn(*mut c_void, c_int, c_int, *mut _, *mut c_void)`
+  - 这说明 fix-loop 已经有能力顺着 `rustc` 诊断收敛，
+    - 但 prompt / guard 之前还没有把这条 Rust 语法事实前置为首轮约束
+- **已落地修复**：
+  - `Phase 3 / harness prompt`
+    - 新增明确规则：
+      - 不要把 `*mut _` / `*const _` 直接写进命名 `fn` item 的参数类型
+      - 若需要可复用 helper，优先：
+        - 用 closure 保留推断
+        - 或把 helper 写成对 pointee 泛型的函数，再把推断保留在 call site
+  - `Phase 3 / compile fixer bundle`
+    - 同步加入同一条修复式约束
+  - `Phase 3 / compile_check.py`
+    - 新增 semantic guard：
+      - 在 named function item signature 中出现 `*mut _` / `*const _` 时，提前给出定向错误
+      - 明确要求改写为：
+        - closure
+        - call-site placeholder
+        - 或 generic helper
+- **修复后真实验证**：
+  - 新 rerun workspace：
+    - `/tmp/seraph-snap7rs-rerun-set-rw-area-callback-current2-20260426-225716`
+  - 结果：
+    - compile：`3 / 3 ok`
+    - fix-loop request：`0`
+    - smoke：`3 / 3 ok`
+    - runtime diagnosis：`0`
+  - 新生成 harness 已不再出现：
+    - `fn rw_cb(..., _tag: *mut _, ...)`
+  - 三个首轮变体都收敛到合法形状：
+    - closure 参数 `_tag`
+    - 或 call-site `fn(*mut c_void, c_int, c_int, *mut _, *mut c_void)` inference
+- **论文价值**：
+  - 这个案例比“保留 Rust 类型推断”又更进了一步：
+    - 工具不仅要知道什么时候不能 concretize 私有 pointee
+    - 还要知道 Rust 允许把推断放在哪些语法位置
+  - 这很适合写成一个 Rust-specific design lesson：
+    - language-aware harness synthesis 不是单层规则
+    - 而是“事实正确 + 位置合法 + 编译器友好”三者同时成立
+
+### 9.8 空输入下的切片起始越界形成重复模式，说明 harness input decoding 需要系统性的边界安全约束
+
+- **已观察到的 round**：
+  - `62` `connect_to`
+  - `87` `set_connection_params`
+  - `89` `set_session_password`
+  - `91` `tm_write`
+- **共同模式**：
+  - 失败并不发生在 target API 内
+  - 而是 harness 自己在空输入上做类似下面的操作：
+    - `data[1..]`
+    - `data[1..1 + take]`
+    - `&data[1..min(5, data.len())]`
+  - 当 `data.len() == 0` 时，虽然结束位置可能被 `min` / `saturating_add` 处理过，
+    - 但起始位置仍是 `1`
+    - 最终触发：
+      - `range start index 1 out of range for slice of length 0`
+- **性质判断**：
+  - 这是一类重复出现的 harness bug family
+  - 不是单个 crate API 的独立 runtime bug
+  - runtime diagnosis 已能把它们标成：
+    - `bug = false`
+    - `harness input-handling bug`
+  - 但如果 generation 侧不收敛，这类噪声仍会反复污染 smoke 结果
+- **为何是 Rust 特有的值得记录的问题**：
+  - Rust 没有悬空指针式未定义行为，但切片边界错误会以 panic 的方式非常明确地暴露
+  - 这使得 harness 输入解析代码的边界质量，会直接影响“我们到底是在测库，还是在测自己写的预处理”
+  - 从论文角度，这体现了：
+    - Rust harness synthesis 不只是所有权与类型问题
+    - 还包括 slice / UTF-8 / delimiter parsing 的边界安全
+- **当前启示**：
+  - prompt / context 后续应加强一类通用生成约束：
+    - 对 `&str`、多段 ASCII、delimiter parsing、prefix slicing
+    - 优先使用 `get`, `split_first`, `split_at` 前置长度检查
+    - 不要从常量正偏移量直接切片，除非长度条件已明确满足
+- **已落地修复**：
+  - `Phase 3 / harness prompt`
+    - 新增输入解析规则：
+      - 当 fuzz input 需要从正偏移量切片时，长度证明必须是显式且局部的
+      - 优先使用 `get`、`split_first`、`split_at`、delimiter helper 或短输入直接 `return`
+  - `Phase 3 / compile fixer bundle`
+    - 同步加入同一条修复式约束
+    - 避免 fix-loop 把编译问题修完后，又生成会在 smoke 中因短输入直接 panic 的切片代码
+  - `Phase 3 / compile_check.py`
+    - 新增针对这类已验证失败形状的 semantic guard
+    - 会在 compile 阶段提前拦截典型模式，例如：
+      - `data[1..1 + take]`
+      - `data[first_nul.saturating_add(1)..]`
+      - `data[idx..idx + take]`（在 `idx = idx.saturating_add(1)` 后且没有局部边界证明）
+    - guard 错误会明确要求改写为：
+      - `get`
+      - `split_first`
+      - `split_at`
+      - 或短输入早返回
+- **修复后真实验证**：
+  - `set_connection_params`
+    - workspace：`/tmp/seraph-snap7rs-rerun-set-connection-params-20260426-223500`
+    - 结果：`3 / 3 compile ok`, `0 fix-loop`, `3 / 3 smoke ok`
+    - 新 harness 已不再生成 `idx = idx.saturating_add(1)` 后直接做 `&data[idx..idx + take]`
+    - 代表性写法改成：
+      - `split_first`
+      - `split_at`
+      - `get(0..4)`
+  - `connect_to`
+    - workspace：`/tmp/seraph-snap7rs-rerun-connect-to-20260426-224200`
+    - 结果：`3 / 3 compile ok`, `0 fix-loop`, `3 / 3 smoke ok`
+    - 新 harness 不再出现：
+      - `data[first_nul.saturating_add(1)..]`
+    - 代表性写法改成：
+      - `split_first`
+      - `split_at`
+      - `get(4..8)`
+  - `set_session_password`
+    - workspace：`/tmp/seraph-snap7rs-rerun-set-session-password-20260426-225000`
+    - 结果：`3 / 3 compile ok`, `0 fix-loop`, `3 / 3 smoke ok`
+    - 新 harness 不再使用：
+      - 从正偏移量直接切入的空切片风险写法
+    - 代表性写法改成：
+      - 整体 `String::from_utf8_lossy`
+      - `split_first`
+      - `splitn`
+  - `tm_write`
+    - workspace：`/tmp/seraph-snap7rs-rerun-tm-write-20260426-225500`
+    - 结果：`3 / 3 compile ok`, `0 fix-loop`, `3 / 3 smoke ok`
+    - 新 harness 不再生成：
+      - `idx = idx.saturating_add(1)` 后直接做 `data[idx..idx + take]`
+    - 代表性写法改成：
+      - `get`
+      - 带长度检查的 prefix 读取
+      - `split_at`
+- **结论**：
+  - 这组问题最终不是通过“更会猜业务语义”解决的，
+  - 而是通过把 Rust 输入切片的边界纪律显式上升为：
+    - generation rule
+    - fixer rule
+    - compile-time semantic guard
+  - 这也很适合写进论文里，作为 Rust harness synthesis 中“语言级安全约束如何反过来塑造工具设计”的一个案例
+
+### 9.10 `snap7-rs` 在最新代码状态下完成了一次新的 full batch 重放，旧 coverage 的 attempted 残留已失效
+
+- **背景**：
+  - 旧 postskip full workspace：
+    - `/tmp/seraph-snap7rs-full-openai-r7-postskip-20260426-210208`
+  - 当时 `coverage.json` 聚合是：
+    - `63` 个 `api_status`
+    - `61 validated`
+    - `2 attempted`
+  - 那个统计已经不适合再代表“当前代码状态”：
+    - 后续我们已经修复并定点 rerun 了 callback 相关 target
+    - retrieve / context / prompt / compile-check 也继续发生了变化
+- **最新 full rerun**：
+  - workspace：
+    - `/tmp/seraph-snap7rs-full-openai-r8-current-20260426-231042`
+  - 运行方式：
+    - 在同一 workspace 上完成整批重放
+    - 中途两次遇到 embedding 网关瞬时 `SSLEOFError`
+    - 都是从已落盘进度继续 resume，而不是重开新 batch
+- **最终交叉核对结果**：
+  - `coverage.json`：
+    - `118` 个 `api_status`
+    - `118 validated`
+    - `0 attempted`
+    - `needs_review = []`
+  - 目录计数也一致：
+    - `contexts = 118`
+    - `compile_indexes = 118`
+    - `fix_loop_indexes = 118`
+    - `smoke_indexes = 118`
+    - `runtime_indexes = 118`
+- **与旧统计的直接对比**：
+  - 旧：
+    - `61 validated + 2 attempted = 63`
+  - 新：
+    - `118 validated + 0 attempted = 118`
+  - 这说明两件事同时发生了：
+    - 旧 coverage 里的 attempted 残留已经被最新代码状态下的全量重放彻底清空
+    - 当前流程能够稳定覆盖的 target 总数，也已经明显高于旧批次
+- **发现集变化**：
+  - 旧 `found_bugs`：
+    - `api::snap7_rs::client::S7Client::db_write`
+  - 新 `found_bugs`：
+    - `api::snap7_rs::client::S7Client::get_pg_block_info`
+  - 这再次说明：
+    - 当 retrieve / ranking / prompt / repair 策略变化后，
+    - 不仅 status 分布会变化，实际被稳定探索到的 bug front 也会变化
+- **论文价值**：
+  - 这很适合在实验部分明确写出：
+    - 对 Rust harness synthesis 工具，评估不能只看“修掉了几个 failed target”
+    - 还要看 pipeline 演进后，full batch 的 target denominator 是否改变
+    - 以及旧 coverage 是否已经被最新代码状态下的整批重放重新洗干净
+
+### 9.11 `bytes` 暴露出两类新的首轮 harness 质量问题：mutable-wrapper borrow discipline 与 post-target noise
+
+- **full batch 基线**：
+  - workspace：
+    - `/tmp/seraph-bytes-round1-openai-20260427-001500`
+  - 最终聚合：
+    - `24 api_status`
+    - `24 validated`
+    - `0 found_bugs`
+    - `0 needs_review`
+  - 这说明当前主链路对 `bytes` 这种 raw-pointer / buffer crate 总体 through-rate 已经很强。
+- **但首轮变体仍暴露两类重复失败形状**：
+  - `compile` 侧：
+    - `4` 个首轮 variant 编译失败，随后均被 `fix-loop` 一轮修回
+    - 典型报错是 `E0502`
+    - 共同模式：
+      - 先创建 `UninitSlice::new(backing.as_mut_slice())`
+      - 或 `UninitSlice::new(&mut buf).as_uninit_slice_mut()`
+      - 然后又回头读取 `backing` / `buf`
+    - 这属于典型 Rust 规则：
+      - mutable wrapper / `&mut` view 活跃期间，不能再去 immutably borrow 原 owner
+  - `smoke` 侧：
+    - `from_raw_parts_mut` 的一个首轮变体在 target 已成功后，又追加 `copy_from_slice`
+    - 最终触发 `bytes` 内部长度断言 panic
+    - runtime diagnosis 明确判定：
+      - 不是 target bug
+      - 是 harness 在 target 成功后做了无必要的后续 mutation，并违反了后续 API precondition
+- **根因判断**：
+  - 这两类问题都不是 extract / retrieve 缺事实。
+  - 真正缺口在于：
+    - 当前实际落地的 `harness_prompt.py` 里，还没有把两条已知重要约束真正写进首轮 prompt：
+      - 若需要长度、索引、只读切片，应在创建 mutable wrapper 前先算好
+      - target 成功后，除非 context 明确要求 cleanup，否则应直接停止
+  - 同时 `compile_fixer_bundle.py` 里也缺少第一条 borrow-discipline 规则。
+- **已落地修复**：
+  - `Phase 3 / harness prompt`
+    - 新增明确规则：
+      - 如果需要 owner / backing buffer 的长度、索引或只读切片，必须在创建 mutable wrapper 或 `&mut` view 前先计算
+      - mutable wrapper 活跃期间，不要再去读、索引或 immutably borrow 原 owner
+      - Target API 成功后，除非 context 事实要求 cleanup，否则立即停止
+  - `Phase 3 / compile fixer bundle`
+    - 同步加入同一条 borrow-discipline 规则
+    - 使修复式提示不只会“看 `rustc` 修借用错误”，也会朝更 Rust-honest 的 shape 收敛
+- **修复后定点 rerun**：
+  - `from_raw_parts_mut`
+    - workspace：
+      - `/tmp/seraph-bytes-rerun-from-raw-parts-mut-20260427-011500`
+    - 结果：
+      - `3 / 3 compile ok`
+      - `0 fix request`
+      - `3 / 3 smoke ok`
+      - `0 runtime_error`
+    - 代表性改进：
+      - 不再在 target 成功后追加无必要的 panic-inducing post-target sequence
+  - `UninitSlice::new`
+    - workspace：
+      - `/tmp/seraph-bytes-rerun-new-20260427-011900`
+    - 结果：
+      - `3 / 3 compile ok`
+      - `0 fix request`
+      - `3 / 3 smoke ok`
+    - 代表性改进：
+      - 新首轮 harness 不再在 `UninitSlice::new(backing.as_mut_slice())` 之后回头读取 `backing`
+  - `UninitSlice::uninit`
+    - workspace：
+      - `/tmp/seraph-bytes-rerun-uninit-20260427-011900`
+    - 结果：
+      - `2 / 3` 首轮 compile ok
+      - `1` 个 variant 仍需 fix-loop 修复后再 smoke
+      - 最终 smoke 仍是 `3 / 3 ok`
+    - 这说明：
+      - mutable-wrapper borrow discipline 已明显改善
+      - 但 `MaybeUninit` / output-buffer 形状的首轮 factual initialization 仍有继续提升空间
+- **修复后最新 full rerun**：
+  - workspace：
+    - `/tmp/seraph-bytes-full-current-20260427-012600`
+  - 最终聚合仍为：
+    - `24 api_status`
+    - `24 validated`
+    - `0 found_bugs`
+    - `0 needs_review`
+  - 但 variant-level 噪声分布有变化：
+    - 旧 full batch：
+      - `4` 个首轮 compile-fail variant
+      - `4` 个 fix request
+      - `1` 个 smoke bug
+    - 新 full batch：
+      - `3` 个首轮 compile-fail variant
+      - `3` 个 fix request
+      - `1` 个 smoke bug
+  - 这说明：
+    - 这次 prompt / fixer 收紧，确实减少了一部分首轮 borrow-shape 编译失败
+    - 也清掉了 `from_raw_parts_mut` 上那类“target 已成功，仍追加无关 post-target mutation”的 smoke 噪声
+  - 当前 remaining noise 已经发生转移：
+    - 新 smoke bug 出现在 target `api::bytes::buf::uninit_slice::UninitSlice::copy_from_slice`
+    - runtime diagnosis 判定为：
+      - `invalid_input_or_precondition`
+      - 原因是 harness 违反了 `copy_from_slice` 的长度相等前提
+    - 这说明下一步更值得收敛的，不再是 post-target noise，
+      - 而是 target 自身 documented precondition 的首轮 factual shaping
+- **论文价值**：
+  - 这是一个很好的补充案例：
+    - Rust harness synthesis 的失败不只来自“类型名猜错”或“callback 太复杂”
+    - 还来自更细的语言级约束：
+      - mutable wrapper 建立后的借用纪律
+      - target 成功后是否继续追加无关状态演化
+  - 它也说明一个方法论：
+    - 有些问题不需要新增 extract 字段
+    - 而是要把已经知道的 Rust discipline 从“设计上知道”变成“prompt / fixer 里强约束地说出来”
+
+### 9.12 `bytes::UninitSlice::copy_from_slice` 暴露出“精确 documented precondition 不能近似满足”
+
+- **问题出现位置**：
+  - full rerun workspace：
+    - `/tmp/seraph-bytes-full-current-20260427-012600`
+  - target：
+    - `api::bytes::buf::uninit_slice::UninitSlice::copy_from_slice`
+  - runtime report：
+    - `/tmp/seraph-bytes-full-current-20260427-012600/reports/runtime_error_013_index.json`
+- **现象**：
+  - 首轮 harness 会写出类似：
+    - 先计算 `copy_len = min(chunk_len, len)`
+    - 再调用 `copy_from_slice(&src[..copy_len])`
+  - 这会把“长度必须严格相等”的 documented precondition，错误地弱化成“尽量接近即可”。
+- **根因判断**：
+  - 这不是 retrieve / context 缺事实。
+  - 现有 context 已明确暴露：
+    - `panics_summary: The function panics if src has a different length than self.`
+    - `Boundary Choices: documented panic condition ...`
+  - 真正问题是：
+    - prompt / fixer 对“精确前置条件”仍然太软，
+    - 模型会把它当成可近似满足的安全建议，而不是必须严格满足的事实约束。
+- **已落地修复**：
+  - 在 `harness_prompt.py` 中新增硬约束：
+    - 若 Target API 文档或 `Boundary Choices` 给出 panic condition / exact relation，target 前必须精确满足
+    - 不要用 `min`、截断或更短切片去近似满足该关系；做不到就 early return
+  - 在 `compile_fixer_bundle.py` 中同步加入同一条规则，
+    - 让 fix-loop 也朝“严格满足 documented precondition”的形状修复。
+- **真实验证**：
+  - targeted rerun workspace：
+    - `/tmp/seraph-bytes-rerun-copy-from-slice-20260427-021500`
+  - 结果：
+    - `3 / 3 compile ok`
+    - `0 fix request`
+    - `3 / 3 smoke ok`
+    - `0 runtime_error`
+  - 代表性变化：
+    - 新 harness 改为在 target 前先检查长度是否严格相等；
+    - 不满足则直接 return，而不是再用 `min(...)` 构造“近似合法”的调用。
+- **论文价值**：
+  - 这说明对 Rust fuzz harness synthesis 来说，
+    - “文档事实已被 retrieve 出来”并不自动等于“模型会严格服从事实”。
+  - 对具有强 precondition 的 API，
+    - 还需要在 prompt / fixer 层显式把“精确关系不可近似”写成 hard rule。
+
+### 9.13 `bytes` 再暴露三类首轮残留：exact target、same-owner aliasing、opaque generic setup guessing
+
+- **最新 full rerun**：
+  - workspace：
+    - `/tmp/seraph-bytes-full-current-20260427-025000`
+  - 最终聚合：
+    - `24 api_status`
+    - `24 validated`
+    - `0 found_bugs`
+    - `0 needs_review`
+  - variant-level 噪声进一步变化为：
+    - `3` 个首轮 compile-fail variant
+    - `3` 个 fix request
+    - `0` 个 smoke bug
+- **这三个 remaining compile-fail 的具体形状**：
+  - `api::bytes::buf::uninit_slice::UninitSlice::uninit`
+    - report：
+      - `/tmp/seraph-bytes-full-current-20260427-025000/reports/compile_005_02.json`
+    - 现象：
+      - marker 标的是 target `UninitSlice::uninit`
+      - 但真实调用却写成了相邻 bridge API `UninitSlice::new`
+    - 性质：
+      - 不是 Rust borrow 错误
+      - 而是“同 owner 相邻 API 可达，但 exact target 被替换掉”的 reachability 漂移
+  - `api::bytes::buf::uninit_slice::UninitSlice::copy_from_slice`
+    - report：
+      - `/tmp/seraph-bytes-full-current-20260427-025000/reports/compile_013_01.json`
+    - 现象：
+      - 先 `let src = backing.as_slice()`
+      - 再 `UninitSlice::new(backing.as_mut_slice())`
+      - 触发 `E0502`
+    - 性质：
+      - 这比“mutable wrapper 活跃后回头读 owner”更细一步：
+      - 即使 immutable borrow 发生在前，只要它跨过了后续的 mutable view 创建，同样会因为同 owner aliasing 失败
+  - `api::bytes::bytes::Bytes::split_to`
+    - report：
+      - `/tmp/seraph-bytes-full-current-20260427-025000/reports/compile_008_02.json`
+    - 现象：
+      - harness 猜出了 `Bytes::from_owner((b, suffix))`
+      - 编译时报：
+        - `(bytes::Bytes, bytes::Bytes): AsRef<[u8]>` not satisfied
+    - 性质：
+      - 这里暴露的是 Rust 泛型/trait-bound 问题：
+      - 当 context 只给出 `fn from_owner(T) -> Self`，但没有把 `T: AsRef<[u8]> + Send + 'static` 展开到 prompt 中时，
+      - 模型可能会随意猜 tuple/composite owner 形状
+- **根因与修复策略**：
+  - 对 `exact target`：
+    - 在 `harness_prompt.py` 中新增：
+      - marker 之间必须调用 context 指定的 exact Target API path
+      - 不得用相邻 same-owner / same-signature API 替代
+    - 在 `compile_fixer_bundle.py` 中新增：
+      - 若 semantic guard 报告“真实 target call 缺失”，应恢复 `target_api_id` 对应的 exact target，而不是保留邻近 substitute call
+  - 对 `same-owner aliasing`：
+    - 在 `harness_prompt.py` / `compile_fixer_bundle.py` 中新增：
+      - 不要让来自同一 backing owner 的只读切片跨过后续 mutable wrapper / `&mut` view 的创建
+      - 若 target 既需要 source slice 又需要 mutable target，优先使用“原始输入 + clone 后 backing”这类分离 owner 的 shape
+  - 对 `opaque generic setup guessing`：
+    - 先用 prompt / fixer 抑制：
+      - 若 setup API 输入是 generic / opaque，而 context 未给出 concrete bounds 或 accepted shapes，
+      - 不要猜 tuple / wrapper / composite owner
+      - 应优先使用其他已 surfaced 且参数形状具体的 producer / constructor
+    - 这同时给出一个后续 context 设计方向：
+      - 对可达 setup API，也应考虑补充 generic bounds，避免模型在 Rust trait 约束上凭空发挥
+- **修复后定点验证**：
+  - `UninitSlice::uninit`
+    - workspace：
+      - `/tmp/seraph-bytes-rerun-uninit-v2-20260427-035200`
+    - 结果：
+      - `3 / 3 compile ok`
+      - `0 fix request`
+      - `3 / 3 smoke ok`
+  - `Bytes::split_to`
+    - workspace：
+      - `/tmp/seraph-bytes-rerun-split-to-v2-20260427-035200`
+    - 结果：
+      - `3 / 3 compile ok`
+      - `0 fix request`
+      - `3 / 3 smoke ok`
+  - `UninitSlice::copy_from_slice`
+    - workspace：
+      - `/tmp/seraph-bytes-rerun-copy-from-slice-v2-20260427-035200`
+    - 结果：
+      - `3 / 3 compile ok`
+      - `0 fix request`
+      - `3 / 3 smoke ok`
+- **最新代码状态的再次 full batch 重放**：
+  - workspace：
+    - `/tmp/seraph-bytes-full-current-20260427-041000`
+  - 最终聚合：
+    - `24 api_status`
+    - `24 validated`
+    - `0 found_bugs`
+    - `0 needs_review`
+  - variant-level 噪声：
+    - `0` 个首轮 compile-fail variant
+    - `0` 个 fix request
+    - `0` 个 smoke bug
+    - `0` 个 runtime diagnosis report
+  - 这说明：
+    - 这一轮新增的三条约束不仅在 targeted rerun 中有效，
+    - 也已经在 `bytes` 的全量真实 crate 重放里把对应 residual 全部压下去。
+- **论文价值**：
+  - 这一组案例很适合强调：
+    - Rust-specific harness synthesis 的问题，不只是 ownership / lifetime 的“粗粒度借用规则”
+    - 还包括：
+      - exact target 与邻近 owner-bridge API 的混淆
+      - source / target 是否 alias 同一 backing owner
+      - generic setup API 的 trait-bound 缺失会诱导模型猜错 owner 形状
+  - 也说明了一条工程经验：
+    - 对某些 Rust 失败，最先该做的不是盲目增加 extract 字段，
+    - 而是先让 prompt / fixer 明确禁止“没有 concrete bounds 支持的结构猜测”；
+    - 等这层收紧后，再决定哪些泛型约束值得真正进入 context schema。
+
+### 9.14 `smallvec::SmallVec::from_raw_parts` 这类 unsafe producer 暴露了隐藏容器表示不变量
+
+- **出现位置**：
+  - 初始 full workspace：
+    - `/tmp/seraph-smallvec-full-20260428-000500`
+  - 后续带残留 runtime report 的 full workspace：
+    - `/tmp/seraph-smallvec-full-current-20260428-003200`
+  - 典型 target：
+    - `api::smallvec::SmallVec::into_vec`
+    - `api::smallvec::SmallVec::into_inner`
+    - `api::smallvec::SmallVec::shrink_to_fit`
+- **现象**：
+  - 首轮 harness 为了构造 `SmallVec<[u8; N]>`，会走：
+    - 普通 `Vec<u8>`
+    - 取 `ptr / len / cap`
+    - 再 `unsafe { SmallVec::from_raw_parts(ptr, len, cap) }`
+  - 这样生成的 harness 往往能编译，
+  - 但在 smoke / runtime 阶段会触发 `smallvec` 自身的不变量检查或 panic。
+  - 其中最早暴露的典型 case 是：
+    - `/tmp/seraph-smallvec-full-20260428-000500`
+    - target `api::smallvec::SmallVec::into_vec`
+- **为什么这不是库 bug**：
+  - runtime diagnosis 对这类失败给出的结论是：
+    - `invalid_input_or_precondition`
+    - 而不是 target library bug
+  - 也就是说，
+    - 失败来自 harness 自己伪造了不 honest 的 owner 状态，
+    - 不是 `smallvec` 在合法输入下崩溃。
+- **Rust / smallvec 特性根因**：
+  - `SmallVec<[u8; N]>` 不是“任何 `Vec<u8>` raw parts 都能无损嫁接进去”的容器。
+  - 它有 inline / heap 两种表示，
+  - `from_raw_parts` 的合法性依赖隐藏的表示不变量，而不是只看：
+    - 指针非空
+    - `len <= cap`
+  - 例如对 inline capacity 为 `N` 的 `SmallVec<[u8; N]>`，
+    - heap/raw-parts state 只有在满足相应容量条件时才是 honest 的。
+  - 这是一类非常 Rust-specific 的问题：
+    - public `unsafe` producer API 的签名看似可直接调用，
+    - 但它真正依赖的表示不变量并不会完整体现在类型文本里。
+- **旧工具缺口**：
+  - 旧 prompt 虽然已经知道 `from_raw_parts` 可以 reach target owner，
+  - 但没有区分：
+    - “图上可达”
+    - 与
+    - “可以 honest 地构造出该 owner 状态”
+  - 结果模型会把 `unsafe` raw-parts setup 当成多样性来源，
+    - 即使 context 里已经同时 surfaced 了安全 producer，例如：
+      - `from_slice`
+      - `from_elem`
+      - `new`
+      - `with_capacity`
+- **已落地修复**：
+  - `rag/seraph_rag/harness_prompt.py`
+    - 新增约束：
+      - 如果 context 已经提供 safe concrete producer，就优先走安全构造
+      - 不要为了多样性而使用 `unsafe` raw-pointer / raw-parts setup
+      - 只有 target 本身就是该 raw-parts API，或 context 明确给出所需不变量时，才允许走这条路径
+  - `rag/seraph_rag/compile_fixer_bundle.py`
+    - 新增对应修复规则：
+      - 若 safe producer 已可 reach 同一 owner，则删除不必要的 raw-parts setup
+      - 不要保留缺乏 surfaced invariant 支持的 `unsafe` raw-parts state fabrication
+- **修复后定点验证**：
+  - `into_vec`：
+    - 初次 rerun 仍残留 raw-parts 构造：
+      - `/tmp/seraph-smallvec-rerun-into-vec-20260428-001800`
+    - 加强规则后的 clean rerun：
+      - `/tmp/seraph-smallvec-rerun-into-vec-v2-20260428-002300`
+      - 结果：`3 / 3 compile ok`，`0 fix request`，`3 / 3 smoke ok`，`0 runtime report`
+  - `into_inner`：
+    - clean rerun：
+      - `/tmp/seraph-smallvec-rerun-into-inner-v2-20260428-003800`
+      - 结果：`3 / 3 compile ok`，`0 fix request`，`3 / 3 smoke ok`，`0 runtime report`
+  - `shrink_to_fit`：
+    - clean rerun：
+      - `/tmp/seraph-smallvec-rerun-shrink-to-fit-v2-20260428-003800`
+      - 结果：`3 / 3 compile ok`，`0 fix request`，`3 / 3 smoke ok`，`0 runtime report`
+- **论文价值**：
+  - 这说明对 Rust harness synthesis 来说，
+    - “可到达的 setup API” 并不等于 “可以 honest 使用的 setup API”。
+  - 尤其对容器类 `unsafe` producer，
+    - 工具必须理解：
+      - safe producer 提供的是显式、可审计的 owner state
+      - raw-parts producer 提供的是受隐藏表示不变量约束的状态入口
+  - SERAPH 在这里的改进不是“让模型更敢写 unsafe”，
+    - 而是反过来在 context 已有安全路径时，主动抑制不受支持的 unsafe 状态伪造。
+
+### 9.15 `smallvec::ToSmallVec::to_smallvec` 暴露了 trait/generic producer 的 owner 单态化缺口
+
+- **出现位置**：
+  - 仍在 `smallvec` 的最新规则前 full replay 中：
+    - `/tmp/seraph-smallvec-full-current-20260428-004300`
+  - 残留失败 target：
+    - `api::smallvec::SmallVec::drain`
+  - 具体失败 report：
+    - `/tmp/seraph-smallvec-full-current-20260428-004300/reports/compile_001_03.json`
+  - 失败 harness：
+    - `/tmp/seraph-smallvec-full-current-20260428-004300/fuzz/harness_001_03.rs`
+- **现象**：
+  - 首轮 harness 写出了：
+    - `let mut sv = data.as_slice().to_smallvec();`
+  - `rustc` 随即报：
+    - `E0283: type annotations needed for SmallVec<_>`
+  - 编译器明确指出：
+    - `ToSmallVec::to_smallvec` 返回 `SmallVec<A>`
+    - 但当前 call site 无法决定 `A` 到底是哪一个实现了 `smallvec::Array` 的数组类型
+- **为什么这不是库 bug**：
+  - 这完全是 harness 首轮生成时的 Rust 类型收敛失败，
+  - 与目标库运行时行为无关。
+  - 同一 workspace 里，
+    - fix-loop 给这个 case 加上具体 owner type 后即可正常编译并 smoke 成功，
+    - 说明问题不在库，而在 harness synthesis 没有把 generic owner 单态化。
+- **Rust 特性根因**：
+  - 这是一个典型的 Rust trait/generic producer 问题：
+    - `to_smallvec` 只告诉你返回 `SmallVec<A>`
+    - `A::Item` 可能能从 `u8` 推出来
+    - 但 `A` 自身的数组长度 / concrete owner shape 仍然是未定的
+  - 也就是说，
+    - “元素类型已知”
+    - 并不等于
+    - “容器 owner 的完整具体类型已知”
+  - 这一点在 Rust 里很关键：
+    - 泛型方法经常返回“部分可推断、部分不可推断”的 owner
+    - 如果 harness 不显式完成单态化，就会直接卡在编译期
+- **旧工具缺口**：
+  - 旧 prompt 已经能约束：
+    - 不要猜 private path
+    - 不要乱写 unsafe raw-parts
+    - 优先使用 surfaced safe producer
+  - 但它还没有显式提醒模型：
+    - 某些 trait-based producer 即使是安全的，
+    - 也不能把返回 owner 的具体类型悬空
+  - 于是模型虽然在同 crate 的其他变体里经常会写：
+    - `let mut sv: SmallVec<[u8; 8]> = ...`
+  - 但在这个变体里却遗漏了 owner annotation。
+- **已落地修复**：
+  - `rag/seraph_rag/harness_prompt.py`
+    - 新增规则：
+      - 若 surfaced trait method 或 setup API 返回 generic owner / collection，
+        且具体 type parameter 不能从 call site 自行推出，
+        不要把结果保持为 unconstrained
+      - 应显式添加 concrete owner type annotation，
+        或改用另一条同 owner 的 surfaced constructor / producer
+  - `rag/seraph_rag/compile_fixer_bundle.py`
+    - 新增 compiler-guided 修复规则：
+      - 若 `rustc` 报告 trait-based / generic producer 让 owner type unconstrained，
+        就补 concrete owner type annotation，
+        或切换到另一条 concrete owner 可 honest 表达的 surfaced producer
+  - 测试先行补在：
+    - `rag/tests/test_harness_prompt.py`
+    - `rag/tests/test_compile_fixer_bundle.py`
+  - 回归验证：
+    - `pytest -q rag/tests/test_harness_prompt.py rag/tests/test_compile_fixer_bundle.py rag/tests/test_compile_check.py rag/tests/test_fix_once.py rag/tests/test_fix_loop.py rag/tests/test_retrieve.py`
+    - 结果：`37 passed`
+- **修复后定点验证**：
+  - 新 workspace：
+    - `/tmp/seraph-smallvec-rerun-drain-current-20260428-012742`
+  - 结果：
+    - 首轮 compile：`3 / 3 ok`
+    - fix request：`0`
+    - smoke：`3 / 3 ok`
+    - runtime diagnosis report：`0`
+  - 新的第 3 个 harness 已直接写成：
+    - `let mut v: SmallVec<[u8; 8]> = data.as_slice().to_smallvec();`
+- **最新代码状态的 fresh full replay**：
+  - workspace：
+    - `/tmp/seraph-smallvec-full-latest-20260428-012843`
+  - 最终聚合：
+    - `14 validated`
+    - `0 found_bugs`
+    - `0 needs_review`
+    - `coverage_rate = 1.0`
+    - `related_coverage_rate = 0.7105263157894737`
+  - variant-level 噪声：
+    - `0` compile-failed
+    - `0` fix request
+    - `0` smoke non-ok
+    - `0` runtime diagnosis report
+- **论文价值**：
+  - 这说明 Rust harness synthesis 除了 owner reachability、borrow 规则、unsafe 边界之外，
+    - 还必须处理“generic producer 返回的 owner 如何单态化”这一层 compile-facing事实。
+  - 对容器类 API，元素类型推断成功并不能保证 owner 类型已经确定；
+  - 如果工具不显式约束这一步，
+    - LLM 就可能生成语义上“看起来合理”、但在 Rust 编译器看来 owner 仍然悬空的 harness。
+
+### 9.16 `bstr::decode_utf8` 暴露了 semantic guard 把 canonical api id 末段误当成真实 public callable 名称
+
+- **出现位置**：
+  - 新 crate full workspace：
+    - `/tmp/seraph-bstr-full-20260428-014518`
+  - 唯一残留 target：
+    - `api::bstr::utf8::decode`
+  - 对应 context：
+    - `/tmp/seraph-bstr-full-20260428-014518/contexts/rag_target_009.md`
+  - 对应首轮 harness：
+    - `/tmp/seraph-bstr-full-20260428-014518/fuzz/harness_009_01.rs`
+    - `/tmp/seraph-bstr-full-20260428-014518/fuzz/harness_009_02.rs`
+    - `/tmp/seraph-bstr-full-20260428-014518/fuzz/harness_009_03.rs`
+- **现象**：
+  - 三个 harness 都真实调用了：
+    - `bstr::decode_utf8(...)`
+  - 但 compile-check 仍统一报：
+    - `SERAPH semantic guard: expected a real target call between SERAPH_STEP_ENTER and SERAPH_STEP_OK for api::bstr::utf8::decode`
+  - 结果是：
+    - 首轮 compile `0 / 3 ok`
+    - fix-loop 三个 request 全部 exhausted
+    - target 在 `coverage.json` 里被记成 `attempted`
+- **根因**：
+  - `knowledge.json` 对这个 target 的 extract 事实是：
+    - `api_id = api::bstr::utf8::decode`
+    - `canonical_path = bstr::utf8::decode`
+    - `public_paths = [\"bstr::decode_utf8\"]`
+  - RAG context 也已经正确渲染：
+    - `- api_id: api::bstr::utf8::decode`
+    - `- path: bstr::decode_utf8`
+  - 但旧 semantic guard 在 `_missing_target_call_between_markers` 里只做了：
+    - `target_api_id.rsplit(\"::\", 1)[-1]`
+    - 也就是仅拿 `decode` 去匹配 markers 之间的真实调用名
+  - 于是：
+    - harness 用 public callable `decode_utf8`
+    - guard 却只认 canonical id 末段 `decode`
+    - 最终把 honest target call 误判成“未调用 target”
+- **为什么这是 Rust / extract-facing 问题**：
+  - 这类问题在 Rust 里很常见：
+    - 文档与源码里的 canonical 定义路径
+    - 对外可 import / 可直接调用的 public re-export path
+    - 并不总是同一个名字
+  - 尤其 free function / module re-export 很容易出现：
+    - canonical path leaf = `decode`
+    - public callable leaf = `decode_utf8`
+  - 也就是说，
+    - semantic guard 不能偷懒把 `api_id` 的最后一段直接当作唯一合法调用名。
+- **已落地修复**：
+  - `rag/seraph_rag/compile_check.py`
+    - semantic guard 现在会：
+      - 先从 harness 路径反推同 workspace 的 `contexts/rag_target_RRR.md`
+      - 读取其中的 `- path: ...`
+      - 将 context 里的真实 public target path leaf 也加入合法 callable name 集合
+      - 若找不到 context，再退回原本的 `api_id` 末段匹配
+  - 同时新增回归测试：
+    - `rag/tests/test_compile_check.py`
+    - 覆盖 `api_id` 末段与 `path` leaf 不一致时，public path 调用仍应被 semantic guard 接受
+- **修复后验证**：
+  - 定点 rerun workspace：
+    - `/tmp/seraph-bstr-rerun-decode-current-20260428-015331`
+  - 结果：
+    - compile `3 / 3 ok`
+    - `0` fix request
+    - smoke `3 / 3 ok`
+    - runtime diagnosis report `0`
+  - fresh full replay workspace：
+    - `/tmp/seraph-bstr-full-latest-20260428-015431`
+  - 最终聚合：
+    - `9 / 9 validated`
+    - `0 found_bugs`
+    - `0 needs_review`
+    - `coverage_rate = 1.0`
+    - `related_coverage_rate = 0.8`
+- **论文价值**：
+  - 这条案例很适合说明：
+    - Rust toolchain 不只是“LLM 会不会 hallucinate path”
+    - 连后验 semantic guard 也必须尊重 extract 暴露出来的 public-path facts
+  - 如果 guard 只按 canonical id suffix 做字符串匹配，
+    - 就会把真实可调用的 public re-export/free-function alias 误杀掉，
+    - 进而把一个本来已经 honest reach 的 target 错记成 `attempted`。
+
+### 9.17 `bstr::ByteVec::from_slice` 暴露了 extension trait 的 provided associated function 不能只靠左值类型注解，必须显式落到 concrete implementor / UFCS
+
+- **出现位置**：
+  - `decode_utf8` semantic guard 修复后的 fresh full replay：
+    - `/tmp/seraph-bstr-full-latest-20260428-015431`
+  - 当时仍残留的 compile-failed 报告：
+    - `compile_002_02.json`
+    - `compile_002_03.json`
+    - `compile_007_01.json`
+    - `compile_007_02.json`
+    - `compile_007_03.json`
+  - 代表性 target：
+    - `api::bstr::ext_vec::ByteVec::into_string_unchecked`
+    - `api::bstr::ext_vec::ByteVec::insert_str`
+- **现象**：
+  - 首轮 harness 常写出：
+    - `let mut bytes: Vec<u8> = ByteVec::from_slice(data.as_slice());`
+    - 或类似的 `ByteVec::from_slice(&data)` 形态
+  - `rustc` 统一报：
+    - `E0790: cannot call associated function on trait without specifying the corresponding impl type`
+  - fix-loop 的正确修复形态则非常稳定：
+    - `<Vec<u8> as ByteVec>::from_slice(...)`
+- **Rust 特性根因**：
+  - `ByteVec::from_slice` 不是 `Vec<u8>` 的 inherent constructor，
+    - 而是 extension trait `bstr::ByteVec` 的 provided associated function。
+  - 在 Rust 里：
+    - 左值写成 `let x: Vec<u8> = ...`
+    - 并不会自动让 `ByteVec::from_slice(...)` 变成合法调用。
+  - 也就是说，
+    - “owner 已经单态化”
+    - 和
+    - “trait path 上的 associated function 已经可调用”
+    - 是两件不同的 compile-facing 事实。
+- **为什么旧 context 不够**：
+  - 旧 context 虽然已经能告诉模型：
+    - target / related API 属于 `bstr::ByteVec`
+    - `from_slice` 返回 `Vec<u8>`
+  - 但没有把下面这层 Rust 语义说死：
+    - 对 provided associated function，
+    - `Vec<u8>` 左值类型注解仍不够，
+    - 必须显式写 concrete implementor 的 UFCS，
+    - 或改用等价的 concrete constructor。
+- **已落地修复**：
+  - `rag/seraph_rag/harness_prompt.py`
+    - 新增规则：
+      - 不要把 surfaced trait path 上的 provided associated function 当作 inherent constructor 调用
+      - 如果 helper 返回的是 `Vec<u8>` 这类 concrete owner，
+        - 要么写 UFCS：
+          - `<Vec<u8> as ByteVec>::from_slice(...)`
+        - 要么切到等价的 standard-library constructor
+      - 额外明确：
+        - 仅靠 left-hand-side type annotation 不足以让 trait path 上的 provided associated function 变为可调用
+  - `rag/seraph_rag/compile_fixer_bundle.py`
+    - 为 fix-loop 增加同样的编译修复规则
+  - 回归测试补在：
+    - `rag/tests/test_harness_prompt.py`
+    - `rag/tests/test_compile_fixer_bundle.py`
+- **修复后真实验证**：
+  - 旧定点 rerun：
+    - `/tmp/seraph-bstr-rerun-into-string-unchecked-current-20260428-020221`
+    - 结果：`1 / 3 compile ok`，`2` 个 fix request
+  - 新定点 rerun：
+    - `/tmp/seraph-bstr-rerun-into-string-unchecked-lhsfix-20260428-113150`
+    - 结果：
+      - compile：`3 / 3 ok`
+      - fix request：`0`
+      - smoke：`3 / 3 ok`
+  - 新 full replay：
+    - `/tmp/seraph-bstr-full-postlhs-20260428-113252`
+    - 相比旧 replay，
+      - `fix_request_total` 从 `5` 降到 `1`
+      - 说明这类 `ByteVec::from_slice` 残差已经被大幅压缩
+- **仍存现象 / 诚实结论**：
+  - 在更晚的 fresh full replay 里，
+    - 仍偶发看到个别变体再次写回 `ByteVec::from_slice(...)`
+    - 例如：
+      - `/tmp/seraph-bstr-full-targetusage-20260428-114741/reports/compile_002_03.json`
+  - 这说明：
+    - prompt / fixer 约束已经足够把它从“系统性重复模式”压缩到“偶发 stochastic 首轮残差”
+    - 但还不能保证所有变体首轮完全不回退到 trait-path constructor 写法
+- **论文价值**：
+  - 这条案例很适合说明：
+    - Rust 容器/extension trait 的 harness synthesis，
+      - 不只是“owner type 能不能推出来”
+      - 还要额外处理“trait-provided associated function 的真实调用语义”
+  - 换言之，
+    - compile-facing facts 里既要有 concrete owner，
+    - 也要有“什么时候必须用 UFCS”这类语言级约束。
+
+### 9.18 `bstr::ByteSlice::to_str_lossy` 暴露了 trait implementor facts 缺失时，单靠 prompt 不够；需要把 target 自身 examples 直接升格为 `Target Usage Hints`
+
+- **出现位置**：
+  - `9.17` 修复后的 full replay：
+    - `/tmp/seraph-bstr-full-postlhs-20260428-113252`
+  - 当时唯一残留的 compile-failed 报告：
+    - `/tmp/seraph-bstr-full-postlhs-20260428-113252/reports/compile_005_02.json`
+  - 对应 target：
+    - `api::bstr::ext_slice::ByteSlice::to_str_lossy`
+- **旧现象**：
+  - 首轮 harness 会先把 `&[u8]` bridge 成：
+    - `let owner: &bstr::BStr = data.as_bstr();`
+  - 随后再调用：
+    - `bstr::ByteSlice::to_str_lossy(owner)`
+  - `rustc` 报：
+    - `E0277: the trait bound BStr: ByteSlice is not satisfied`
+  - fix-loop 的正确收敛形态则是：
+    - 直接回到 `&[u8]`
+    - 或在 `&BStr` 上用 method syntax 调用文档中已有的 concrete receiver 形态
+- **根因**：
+  - `retrieve.py` 里本来已经有：
+    - 若 graph 里存在 `impl_connects_type_trait` 边，就把 trait implementor type 带进 compile-facing context
+  - 但对 `bstr::ByteSlice` / `bstr::ByteVec` 这类扩展 trait，
+    - 当前 `graph.pkl` 里并没有 `[u8]` / `Vec<u8>` 的 implementor 边
+  - 结果 context 只知道：
+    - trait 叫 `ByteSlice`
+    - 有 helper `as_bstr`
+  - 却说不出：
+    - `to_str_lossy` 的 canonical receiver 其实应优先保持在 byte-slice / concrete backing owner 形态
+- **为什么单靠 prompt 不够**：
+  - 我先加了更强的 prompt / fixer 约束：
+    - trait-method target 在没有 concrete implementor 事实时，
+      - 尽量保持 receiver 在最简单的 backing owner 形态
+      - 不要轻易桥到 `BStr`
+  - 但定点 rerun 仍残留 `1` 个 fix request：
+    - `/tmp/seraph-bstr-rerun-to-str-lossy-bridgefix-20260428-114204`
+  - 说明这里的问题不是只差一句“别用 wrapper”，
+    - 而是 context 自身没把 target 的 documented usage shape 带出来。
+- **extract 侧已有但旧 context 没用上的事实**：
+  - `knowledge.json` 里，
+    - `api::bstr::ext_slice::ByteSlice::to_str_lossy`
+    - 自己的 `doc_sections.examples` 已经明确写了：
+      - `let mut bstring = <Vec<u8>>::from("☃βツ"); ... bstring.to_str_lossy();`
+      - `let bs = B(b"..."); ... bs.to_str_lossy();`
+  - 也就是说，
+    - extract 其实已经知道 canonical receiver / setup 形态，
+    - 只是旧 RAG context 没有把这部分直接给到 LLM。
+- **已落地修复**：
+  - `rag/seraph_rag/retrieve.py`
+    - 在 `## Target API` 后新增：
+      - `## Target Usage Hints`
+    - 直接从 target 自身 `doc_sections.examples` 中提炼：
+      - receiver shape
+      - 关键 setup line
+      - 对 target 的 documented call line
+    - 例如 `to_str_lossy` 现在会显式出现：
+      - ``let mut bstring = <Vec<u8>>::from("☃βツ"); assert_eq!(Cow::Borrowed("☃βツ"), bstring.to_str_lossy());``
+      - ``let bs = B(...); assert_eq!(..., bs.to_str_lossy());``
+  - `rag/seraph_rag/harness_prompt.py`
+    - 新增规则：
+      - `Target Usage Hints` 是 extract-grounded 的 target receiver / setup shape
+      - 如果存在，应优先跟随这些 documented receiver forms，
+        - 而不是为了“多样性”再发明 wrapper bridge
+  - 回归测试补在：
+    - `rag/tests/test_retrieve.py`
+    - `rag/tests/test_harness_prompt.py`
+- **修复后真实验证**：
+  - 新定点 rerun：
+    - `/tmp/seraph-bstr-rerun-to-str-lossy-targetusage-20260428-114642`
+  - 结果：
+    - compile：`3 / 3 ok`
+    - fix request：`0`
+    - smoke：`3 / 3 ok`
+  - 新 context 里已真实出现：
+    - `## Target Usage Hints`
+  - 且首轮 harness 已不再出现 compile-failed 的 `ByteSlice::to_str_lossy(owner_as_bstr)` 形态
+- **与 full replay 的关系**：
+  - 在加入 `Target Usage Hints` 之后的 fresh full replay：
+    - `/tmp/seraph-bstr-full-targetusage-20260428-114741`
+  - `fix_request_total` 仍为 `1`
+  - 但这最后一个残差已经不再是 `to_str_lossy` 的 `BStr` bridge，
+    - 而是回到 `9.17` 中那个偶发的 `ByteVec::from_slice` / UFCS 问题
+  - 这说明：
+    - `Target Usage Hints` 的确把 `to_str_lossy` 这一类 receiver-shape 误导消掉了，
+    - 没有被新的 full replay 再次打回原形。
+- **论文价值**：
+  - 这条案例非常适合说明：
+    - 对 Rust harness synthesis 来说，
+      - “target 自己文档里的 example usage”
+      - 不是可有可无的附加说明，
+      - 而是 canonical receiver / owner shape 的一手事实来源。
+  - 当 trait implementor metadata 在 extract / graph 里不完整时，
+    - 把 target examples 直接升格为 context schema 的一级 section，
+    - 能比继续堆 prompt 规则更稳定地收敛首轮 harness 质量。

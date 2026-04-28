@@ -32,6 +32,17 @@ _UNSAFE_FABRICATION_MARKERS = (
 )
 _ENTER_MARKER_RE = re.compile(r"SERAPH_STEP_ENTER:\d+:(api::[A-Za-z0-9_:]+)")
 _OK_MARKER_RE = re.compile(r"SERAPH_STEP_OK:\d+:(api::[A-Za-z0-9_:]+)")
+_DIRECT_TAKE_SLICE_RE = re.compile(r"data\[\s*1\s*\.\.\s*1\s*\+\s*take\s*\]")
+_DIRECT_MIN_SLICE_RE = re.compile(r"data\[\s*1\s*\.\.\s*(?:core::cmp::)?min\([^]]+\)\s*\]")
+_SATURATING_PLUS_ONE_SLICE_RE = re.compile(
+    r"data\[\s*(?P<var>[A-Za-z_][A-Za-z0-9_]*)\.saturating_add\(\s*1\s*\)\s*\.\.[^]]*\]"
+)
+_IDX_PLUS_TAKE_SLICE_RE = re.compile(r"data\[\s*idx\s*\.\.\s*idx\s*\+\s*take\s*\]")
+_FN_ITEM_PLACEHOLDER_POINTEE_RE = re.compile(
+    r"fn\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*\([^)]*(?P<snippet>\*mut\s*_|\*const\s*_)[^)]*\)",
+    re.DOTALL,
+)
+_HARNESS_ROUND_RE = re.compile(r"harness_(?P<round>\d{3})_\d{2}(?:_fixed_\d{2})?\.rs$")
 
 
 def run_compile_check(
@@ -131,7 +142,13 @@ def _semantic_guard_failure(harness: Path) -> str | None:
             f"`{unsafe_fabrication_marker}` can fabricate missing target state; "
             "replace it with a real public setup chain or an early return.\n"
         )
-    marker_failure = _missing_target_call_between_markers(source)
+    input_slice_failure = _unsafe_input_slice_failure(source)
+    if input_slice_failure is not None:
+        return input_slice_failure
+    callback_placeholder_failure = _invalid_named_fn_placeholder_failure(source)
+    if callback_placeholder_failure is not None:
+        return callback_placeholder_failure
+    marker_failure = _missing_target_call_between_markers(harness, source)
     if marker_failure is not None:
         return marker_failure
     return None
@@ -144,7 +161,84 @@ def _unsafe_fabrication_marker(source: str) -> str | None:
     return None
 
 
-def _missing_target_call_between_markers(source: str) -> str | None:
+def _unsafe_input_slice_failure(source: str) -> str | None:
+    for match in _DIRECT_TAKE_SLICE_RE.finditer(source):
+        prefix = source[: match.start()]
+        if _has_early_return_on_empty(prefix) or _has_local_positive_offset_guard(prefix):
+            continue
+        return _input_slice_failure_message(match.group(0))
+
+    for match in _DIRECT_MIN_SLICE_RE.finditer(source):
+        prefix = source[: match.start()]
+        if _has_early_return_on_empty(prefix) or _has_local_positive_offset_guard(prefix):
+            continue
+        return _input_slice_failure_message(match.group(0))
+
+    for match in _SATURATING_PLUS_ONE_SLICE_RE.finditer(source):
+        prefix = source[: match.start()]
+        guard_var = match.group("var")
+        if _has_local_len_guard_for_var(prefix, guard_var):
+            continue
+        return _input_slice_failure_message(match.group(0))
+
+    for match in _IDX_PLUS_TAKE_SLICE_RE.finditer(source):
+        prefix = source[: match.start()]
+        if _has_early_return_on_empty(prefix) or _has_local_idx_guard(prefix):
+            continue
+        return _input_slice_failure_message(match.group(0))
+
+    return None
+
+
+def _input_slice_failure_message(snippet: str) -> str:
+    return (
+        "SERAPH semantic guard: input-derived slice "
+        f"`{snippet}` can panic before reaching the target on short inputs; "
+        "prefer `get`, `split_first`, `split_at`, or an early return with an explicit local bounds check.\n"
+    )
+
+
+def _invalid_named_fn_placeholder_failure(source: str) -> str | None:
+    match = _FN_ITEM_PLACEHOLDER_POINTEE_RE.search(source)
+    if match is None:
+        return None
+    return (
+        "SERAPH semantic guard: placeholder `_` in named function item signature "
+        f"`{match.group('name')}` is invalid Rust; keep raw-pointer placeholders in closures "
+        "or call-site casts/turbofish, or make the helper generic over the pointee type.\n"
+    )
+
+
+def _has_early_return_on_empty(prefix: str) -> bool:
+    return bool(re.search(r"if\s+data\.is_empty\(\)\s*\{[^{}]{0,200}?return\b", prefix, re.DOTALL))
+
+
+def _has_local_positive_offset_guard(prefix: str) -> bool:
+    window = prefix[-240:]
+    patterns = (
+        r"if\s+data\.len\(\)\s*>\s*1",
+        r"if\s+data\.len\(\)\s*>=\s*2",
+        r"if\s*!data\.is_empty\(\)",
+    )
+    return any(re.search(pattern, window) for pattern in patterns)
+
+
+def _has_local_len_guard_for_var(prefix: str, var_name: str) -> bool:
+    window = prefix[-240:]
+    return bool(
+        re.search(
+            rf"if\s+{re.escape(var_name)}\s*<\s*data\.len\(\)",
+            window,
+        )
+    )
+
+
+def _has_local_idx_guard(prefix: str) -> bool:
+    window = prefix[-240:]
+    return bool(re.search(r"if\s+idx\s*<\s*data\.len\(\)", window))
+
+
+def _missing_target_call_between_markers(harness: Path, source: str) -> str | None:
     enter_match = _ENTER_MARKER_RE.search(source)
     ok_match = _OK_MARKER_RE.search(source)
     if enter_match is None or ok_match is None:
@@ -153,10 +247,82 @@ def _missing_target_call_between_markers(source: str) -> str | None:
     if ok_match.group(1) != target_api_id:
         return None
     between = source[enter_match.end() : ok_match.start()]
-    method_name = target_api_id.rsplit("::", 1)[-1]
-    if re.search(rf"(\.|::|\b){re.escape(method_name)}\s*\(", between):
-        return None
+    for method_name in _target_call_names(harness, target_api_id):
+        for match in re.finditer(rf"(\.|::|\b){re.escape(method_name)}", between):
+            if _call_suffix_starts_at(between, match.end()):
+                return None
     return (
         "SERAPH semantic guard: expected a real target call between "
         f"SERAPH_STEP_ENTER and SERAPH_STEP_OK for `{target_api_id}`.\n"
     )
+
+
+def _target_call_names(harness: Path, target_api_id: str) -> List[str]:
+    names: List[str] = []
+    api_leaf = target_api_id.rsplit("::", 1)[-1]
+    if api_leaf:
+        names.append(api_leaf)
+    context_leaf = _context_target_path_leaf(harness, target_api_id)
+    if context_leaf and context_leaf not in names:
+        names.append(context_leaf)
+    return names
+
+
+def _context_target_path_leaf(harness: Path, target_api_id: str) -> str | None:
+    match = _HARNESS_ROUND_RE.search(harness.name)
+    if match is None:
+        return None
+    if harness.parent.name != "fuzz":
+        return None
+    context_path = harness.parent.parent / "contexts" / "rag_target_{}.md".format(match.group("round"))
+    if not context_path.exists():
+        return None
+    api_id = None
+    target_path = None
+    for line in context_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("- api_id:"):
+            api_id = line.split(":", 1)[1].strip()
+        elif line.startswith("- path:"):
+            target_path = line.split(":", 1)[1].strip()
+    if api_id != target_api_id or not target_path:
+        return None
+    return target_path.rsplit("::", 1)[-1]
+
+
+def _call_suffix_starts_at(source: str, index: int) -> bool:
+    cursor = _skip_whitespace(source, index)
+    if cursor < len(source) and source[cursor] == "(":
+        return True
+    if not source.startswith("::", cursor):
+        return False
+    cursor = _skip_whitespace(source, cursor + 2)
+    if cursor >= len(source) or source[cursor] != "<":
+        return False
+    cursor = _skip_turbofish(source, cursor)
+    if cursor is None:
+        return False
+    cursor = _skip_whitespace(source, cursor)
+    return cursor < len(source) and source[cursor] == "("
+
+
+def _skip_whitespace(source: str, index: int) -> int:
+    while index < len(source) and source[index].isspace():
+        index += 1
+    return index
+
+
+def _skip_turbofish(source: str, index: int) -> int | None:
+    if index >= len(source) or source[index] != "<":
+        return None
+    depth = 0
+    cursor = index
+    while cursor < len(source):
+        char = source[cursor]
+        if char == "<":
+            depth += 1
+        elif char == ">":
+            depth -= 1
+            if depth == 0:
+                return cursor + 1
+        cursor += 1
+    return None

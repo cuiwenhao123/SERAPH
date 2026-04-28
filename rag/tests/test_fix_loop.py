@@ -145,3 +145,37 @@ def test_run_fix_loop_generates_missing_response_with_command_template(tmp_path)
 
     assert result["status"] == "ok"
     assert (responses_dir / "fix_response_011_01_01.md").exists()
+
+
+def test_run_fix_loop_continues_after_malformed_fix_response(tmp_path):
+    request_path = tmp_path / "fix_request_012_01.json"
+    responses_dir = tmp_path / "fixes"
+    fuzz_dir = tmp_path / "fuzz"
+    report_dir = tmp_path / "reports"
+    request_path.write_text(
+        json.dumps({"round": 12, "variant": 1, "target_api_id": "api::fixture::danger"}),
+        encoding="utf-8",
+    )
+    responses_dir.mkdir()
+    (responses_dir / "fix_response_012_01_01.md").write_text(
+        "```rust\nfn main() {}\n```",
+        encoding="utf-8",
+    )
+    (responses_dir / "fix_response_012_01_02.md").write_text(
+        VALID_FIXED_DANGER_RESPONSE,
+        encoding="utf-8",
+    )
+
+    result = run_fix_loop(
+        request_path,
+        responses_dir,
+        fuzz_dir,
+        report_dir,
+        max_attempts=2,
+        command_template="python3 -c 'import sys; sys.exit(0)'",
+    )
+
+    assert result["status"] == "ok"
+    assert result["successful_attempt"] == 2
+    assert [attempt["status"] for attempt in result["attempts"]] == ["failed", "ok"]
+    assert result["attempts"][0]["exit_code"] == 3

@@ -60,6 +60,78 @@ def test_render_context_markdown_surfaces_variant_opportunities():
     assert "prefer documented recoverable boundaries" not in variant_section
 
 
+def test_render_context_markdown_surfaces_target_usage_hints_from_examples():
+    knowledge = {
+        "crate_meta": {"crate_import_name": "fixture"},
+        "modules": [{"module_id": "mod::fixture", "canonical_path": "fixture"}],
+        "types": [],
+        "trait_registry": [
+            {
+                "trait_id": "trait::fixture::ByteSlice",
+                "name": "ByteSlice",
+                "canonical_path": "fixture::ByteSlice",
+                "public_anchor_module_id": "mod::fixture",
+                "is_unsafe": False,
+                "required_methods": [],
+                "provided_methods": ["to_str_lossy"],
+            }
+        ],
+        "trait_impl_registry": [],
+        "apis": [
+            {
+                "api_id": "api::fixture::ByteSlice::to_str_lossy",
+                "name": "to_str_lossy",
+                "canonical_path": "fixture::ByteSlice::to_str_lossy",
+                "public_paths": ["fixture::ByteSlice::to_str_lossy"],
+                "public_anchor_module_id": "mod::fixture",
+                "owner_trait_id": "trait::fixture::ByteSlice",
+                "signature_text": "fn to_str_lossy(&Self) -> Cow<'_, str>",
+                "receiver": "&Self",
+                "arg_types": [],
+                "return_type": "Cow<'_, str>",
+                "api_kind": "trait_method",
+                "contains_unsafe_block": True,
+                "doc_sections": {
+                    "summary": "Convert bytes to lossy UTF-8.",
+                    "examples": "\n".join(
+                        [
+                            "Basic usage:",
+                            "",
+                            "```",
+                            "use fixture::ByteSlice;",
+                            "let mut data = <Vec<u8>>::from(\"abc\");",
+                            "assert_eq!(\"abc\", data.to_str_lossy());",
+                            "```",
+                            "",
+                            "```",
+                            "use fixture::{B, ByteSlice};",
+                            "let bs = B(b\"abc\");",
+                            "assert_eq!(\"abc\", bs.to_str_lossy());",
+                            "```",
+                        ]
+                    ),
+                },
+            }
+        ],
+        "risk_facts": {
+            "unsafe_functions": [],
+            "ffi_functions": [],
+            "panic_sites": [],
+        },
+    }
+    graph = build_graph(knowledge)
+    target = rank_unsafe_targets(graph)[0]
+
+    markdown = render_context_markdown(knowledge, graph, target)
+
+    assert "## Target Usage Hints" in markdown
+    assert (
+        '- `let mut data = <Vec<u8>>::from("abc"); assert_eq!("abc", data.to_str_lossy());`'
+        in markdown
+    )
+    assert '- `let bs = B(b"abc"); assert_eq!("abc", bs.to_str_lossy());`' in markdown
+
+
 def test_render_context_markdown_surfaces_compile_critical_import_trait_and_enum_facts():
     knowledge = {
         "crate_meta": {"crate_import_name": "fixture"},
@@ -199,6 +271,305 @@ def test_render_context_markdown_surfaces_compile_critical_import_trait_and_enum
     assert "fixture::io::IoContext::buf_len: fn buf_len(&self) -> usize [required]" in compile_facts
     assert "fixture::io::IoContext::seek: fn seek(&mut self, i64, Whence, bool) -> Result<u64, Error> [provided]" in compile_facts
     assert "fixture::io::Whence: Size | Set | Cur | End" in compile_facts
+
+
+def test_render_context_markdown_surfaces_output_initialization_facts_for_mut_output_types(tmp_path):
+    ffi_path = tmp_path / "ffi.rs"
+    ffi_path.write_text(
+        "\n".join(
+            [
+                "pub type BigArray = [u16; 8192usize];",
+                "#[derive(Debug, Copy, Clone)]",
+                "pub struct OutputInfo {",
+                "    pub count: i32,",
+                "    pub tag: [u8; 4usize],",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    knowledge = {
+        "crate_meta": {"crate_import_name": "fixture"},
+        "modules": [{"module_id": "mod::fixture", "canonical_path": "fixture"}],
+        "types": [
+            {
+                "type_id": "type::fixture::Context",
+                "name": "Context",
+                "canonical_path": "fixture::Context",
+                "public_anchor_module_id": "mod::fixture",
+                "kind": "struct",
+                "variants": [],
+                "has_hidden_fields": False,
+                "has_hidden_variants": False,
+            },
+            {
+                "type_id": "type::fixture::BigArray",
+                "name": "BigArray",
+                "canonical_path": "fixture::BigArray",
+                "public_anchor_module_id": "mod::fixture",
+                "kind": "type_alias",
+                "code_ref": {
+                    "file": str(ffi_path),
+                    "start_line": 1,
+                    "end_line": 1,
+                },
+                "fields": [],
+                "variants": [],
+                "has_hidden_fields": False,
+                "has_hidden_variants": False,
+            },
+            {
+                "type_id": "type::fixture::OutputInfo",
+                "name": "OutputInfo",
+                "canonical_path": "fixture::OutputInfo",
+                "public_anchor_module_id": "mod::fixture",
+                "kind": "struct",
+                "code_ref": {
+                    "file": str(ffi_path),
+                    "start_line": 3,
+                    "end_line": 6,
+                },
+                "fields": [
+                    {
+                        "position": 0,
+                        "name": "count",
+                        "type_text": "i32",
+                        "visibility_text": "public",
+                        "source": {
+                            "file": str(ffi_path),
+                            "start_line": 4,
+                            "end_line": 4,
+                        },
+                    },
+                    {
+                        "position": 1,
+                        "name": "tag",
+                        "type_text": "[u8; _]",
+                        "visibility_text": "public",
+                        "source": {
+                            "file": str(ffi_path),
+                            "start_line": 5,
+                            "end_line": 5,
+                        },
+                    },
+                ],
+                "variants": [],
+                "has_hidden_fields": False,
+                "has_hidden_variants": False,
+            },
+        ],
+        "trait_registry": [
+            {
+                "trait_id": "trait::core::clone::Clone",
+                "name": "Clone",
+                "canonical_path": "core::clone::Clone",
+                "is_unsafe": False,
+            },
+            {
+                "trait_id": "trait::core::marker::Copy",
+                "name": "Copy",
+                "canonical_path": "core::marker::Copy",
+                "is_unsafe": False,
+            },
+        ],
+        "trait_impl_registry": [
+            {
+                "target_type_id": "type::fixture::BigArray",
+                "trait_id": "trait::core::clone::Clone",
+                "trait_path": "core::clone::Clone",
+            },
+            {
+                "target_type_id": "type::fixture::BigArray",
+                "trait_id": "trait::core::marker::Copy",
+                "trait_path": "core::marker::Copy",
+            },
+            {
+                "target_type_id": "type::fixture::OutputInfo",
+                "trait_id": "trait::core::clone::Clone",
+                "trait_path": "core::clone::Clone",
+            },
+            {
+                "target_type_id": "type::fixture::OutputInfo",
+                "trait_id": "trait::core::marker::Copy",
+                "trait_path": "core::marker::Copy",
+            },
+        ],
+        "apis": [
+            {
+                "api_id": "api::fixture::Context::target",
+                "name": "target",
+                "canonical_path": "fixture::Context::target",
+                "public_anchor_module_id": "mod::fixture",
+                "owner_type_id": "type::fixture::Context",
+                "signature": "fn target(&Self, &mut OutputInfo, &mut BigArray) -> Result<()>",
+                "receiver": "&Self",
+                "arg_types": ["&mut OutputInfo", "&mut BigArray"],
+                "return_type": "Result<()>",
+                "api_kind": "method",
+                "contains_unsafe_block": True,
+            },
+            {
+                "api_id": "api::fixture::Context::new",
+                "name": "new",
+                "canonical_path": "fixture::Context::new",
+                "public_anchor_module_id": "mod::fixture",
+                "signature": "fn new() -> Context",
+                "receiver": "",
+                "arg_types": [],
+                "return_type": "Context",
+                "api_kind": "associated_constructor",
+            },
+        ],
+        "risk_facts": {
+            "unsafe_functions": [],
+            "ffi_functions": [],
+            "panic_sites": [],
+        },
+    }
+    graph = build_graph(knowledge)
+    target = rank_unsafe_targets(graph)[0]
+
+    markdown = render_context_markdown(knowledge, graph, target)
+    compile_facts = markdown.split("## Compile-Time Facts", 1)[1].split("## Related APIs", 1)[0]
+
+    assert "### Output Initialization Facts" in compile_facts
+    assert "fixture::BigArray: prefer `let mut value: fixture::BigArray = [0; 8192];`" in compile_facts
+    assert (
+        "fixture::OutputInfo: prefer `let mut value = fixture::OutputInfo { count: 0, tag: [0; 4] };`"
+        in compile_facts
+    )
+
+
+def test_render_context_markdown_surfaces_target_generic_bounds():
+    knowledge = {
+        "crate_meta": {"crate_import_name": "fixture"},
+        "modules": [{"module_id": "mod::fixture", "canonical_path": "fixture"}],
+        "types": [
+            {
+                "type_id": "type::fixture::Client",
+                "name": "Client",
+                "canonical_path": "fixture::Client",
+                "public_anchor_module_id": "mod::fixture",
+                "kind": "struct",
+                "variants": [],
+                "has_hidden_fields": False,
+                "has_hidden_variants": False,
+            }
+        ],
+        "trait_registry": [],
+        "trait_impl_registry": [],
+        "apis": [
+            {
+                "api_id": "api::fixture::Client::set_callback",
+                "name": "set_callback",
+                "canonical_path": "fixture::Client::set_callback",
+                "public_anchor_module_id": "mod::fixture",
+                "owner_type_id": "type::fixture::Client",
+                "signature_text": "fn set_callback(&Self, Option<F>) -> Result<()>",
+                "receiver": "&Self",
+                "arg_types": ["Option<F>"],
+                "return_type": "Result<()>",
+                "api_kind": "inherent_method",
+                "generic_params": ["F"],
+                "where_clauses": ["F: FnMut(*mut c_void, c_int, c_int) + 'static"],
+                "contains_unsafe_block": True,
+                "doc_sections": {"safety": ""},
+            },
+            {
+                "api_id": "api::fixture::Client::create",
+                "name": "create",
+                "canonical_path": "fixture::Client::create",
+                "public_anchor_module_id": "mod::fixture",
+                "owner_type_id": "type::fixture::Client",
+                "signature_text": "fn create() -> Client",
+                "arg_types": [],
+                "return_type": "Self",
+                "api_kind": "constructor",
+                "doc_sections": {"safety": ""},
+            },
+        ],
+        "risk_facts": {"unsafe_functions": [], "ffi_functions": [], "panic_sites": []},
+    }
+    graph = build_graph(knowledge)
+    target = rank_unsafe_targets(graph)[0]
+
+    markdown = render_context_markdown(knowledge, graph, target)
+    target_section = markdown.split("## Target API", 1)[1].split("## Known Reachable Paths", 1)[0]
+
+    assert "- generic_bounds: F: FnMut(*mut c_void, c_int, c_int) + 'static" in target_section
+
+
+def test_render_context_markdown_surfaces_public_types_mentioned_only_in_target_generic_bounds():
+    knowledge = {
+        "crate_meta": {"crate_import_name": "fixture"},
+        "modules": [{"module_id": "mod::fixture", "canonical_path": "fixture"}],
+        "types": [
+            {
+                "type_id": "type::fixture::Client",
+                "name": "Client",
+                "canonical_path": "fixture::Client",
+                "public_paths": ["fixture::Client"],
+                "public_anchor_module_id": "mod::fixture",
+                "kind": "struct",
+                "variants": [],
+                "has_hidden_fields": False,
+                "has_hidden_variants": False,
+            },
+            {
+                "type_id": "type::fixture::Event",
+                "name": "Event",
+                "canonical_path": "fixture::internal::Event",
+                "public_paths": ["fixture::Event"],
+                "public_anchor_module_id": "mod::fixture",
+                "kind": "struct",
+                "variants": [],
+                "has_hidden_fields": False,
+                "has_hidden_variants": False,
+            },
+        ],
+        "trait_registry": [],
+        "trait_impl_registry": [],
+        "apis": [
+            {
+                "api_id": "api::fixture::Client::set_callback",
+                "name": "set_callback",
+                "canonical_path": "fixture::Client::set_callback",
+                "public_anchor_module_id": "mod::fixture",
+                "owner_type_id": "type::fixture::Client",
+                "signature_text": "fn set_callback(&Self, Option<F>) -> Result<()>",
+                "receiver": "&Self",
+                "arg_types": ["Option<F>"],
+                "return_type": "Result<()>",
+                "api_kind": "inherent_method",
+                "generic_params": ["F"],
+                "where_clauses": ["F: FnMut(*mut Event, c_int)"],
+                "contains_unsafe_block": True,
+                "doc_sections": {"safety": ""},
+            },
+            {
+                "api_id": "api::fixture::Client::create",
+                "name": "create",
+                "canonical_path": "fixture::Client::create",
+                "public_anchor_module_id": "mod::fixture",
+                "owner_type_id": "type::fixture::Client",
+                "signature_text": "fn create() -> Client",
+                "arg_types": [],
+                "return_type": "Self",
+                "api_kind": "constructor",
+                "doc_sections": {"safety": ""},
+            },
+        ],
+        "risk_facts": {"unsafe_functions": [], "ffi_functions": [], "panic_sites": []},
+    }
+    graph = build_graph(knowledge)
+    target = rank_unsafe_targets(graph)[0]
+
+    markdown = render_context_markdown(knowledge, graph, target)
+    compile_facts = markdown.split("## Compile-Time Facts", 1)[1].split("## Related APIs", 1)[0]
+
+    assert "### Exact Import Paths" in compile_facts
+    assert "type::fixture::Event => fixture::Event [kind=type]" in compile_facts
 
 
 def test_render_context_markdown_surfaces_type_trait_facts_for_relevant_argument_types():

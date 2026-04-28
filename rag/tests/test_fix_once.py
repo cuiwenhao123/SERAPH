@@ -44,3 +44,34 @@ def test_run_fix_once_writes_fixed_harness_and_compile_report(tmp_path):
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["harness"].endswith("harness_004_02_fixed_01.rs")
     assert report["status"] == "ok"
+
+
+def test_run_fix_once_reports_validation_failure_without_crashing(tmp_path):
+    request_path = tmp_path / "fix_request_009_01.json"
+    response_path = tmp_path / "fix_response_009_01.md"
+    fuzz_dir = tmp_path / "fuzz"
+    report_dir = tmp_path / "reports"
+    request_path.write_text(
+        json.dumps({"round": 9, "variant": 1, "target_api_id": "api::fixture::danger"}),
+        encoding="utf-8",
+    )
+    response_path.write_text(
+        "```rust\nfn main() {}\n```",
+        encoding="utf-8",
+    )
+
+    result = run_fix_once(
+        request_path,
+        response_path,
+        fuzz_dir,
+        report_dir,
+        attempt=1,
+        command_template="python3 -c 'import sys; sys.exit(0)'",
+    )
+
+    assert result["status"] == "failed"
+    assert result["exit_code"] == 3
+    assert "missing SERAPH markers" in result["stderr"]
+    assert not (fuzz_dir / "harness_009_01_fixed_01.rs").exists()
+    report_path = report_dir / "compile_009_01_fixed_01.json"
+    assert report_path.exists()
