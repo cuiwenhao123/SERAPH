@@ -171,7 +171,7 @@ def test_cli_harness_write_splits_response_into_harnesses(tmp_path):
         encoding="utf-8",
     )
     response_path.write_text(
-        '```rust\nfn fuzz() { println!("SERAPH_STEP_ENTER:1:api::fixture::danger"); println!("SERAPH_STEP_OK:1:api::fixture::danger"); }\n```',
+        '```rust\npub fn run_case(input: &[u8]) { let _ = input; println!("SERAPH_STEP_ENTER:1:api::fixture::danger"); println!("SERAPH_STEP_OK:1:api::fixture::danger"); }\n```',
         encoding="utf-8",
     )
 
@@ -188,6 +188,62 @@ def test_cli_harness_write_splits_response_into_harnesses(tmp_path):
     ])
 
     assert (output_dir / "harness_003_01.rs").exists()
+
+
+def test_merge_harnesses_cli_writes_merge_report(tmp_path):
+    workspace = tmp_path / "workspace"
+    fuzz_dir = workspace / "fuzz"
+    reports_dir = workspace / "reports"
+    fuzz_dir.mkdir(parents=True)
+    reports_dir.mkdir(parents=True)
+    ok_case = fuzz_dir / "harness_001_01.rs"
+    ok_case.write_text("pub fn run_case(input: &[u8]) { let _ = input; }\n", encoding="utf-8")
+    (workspace / "crate_config.json").write_text(
+        json.dumps(
+            {
+                "crate_dir": "/tmp/target-crate",
+                "package_name": "fixture",
+                "crate_import_name": "fixture",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (reports_dir / "compile_001_index.json").write_text(
+        json.dumps(
+            {
+                "round": 1,
+                "status": "ok",
+                "reports": [
+                    {"harness": str(ok_case), "status": "ok", "exit_code": 0},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (reports_dir / "smoke_001_index.json").write_text(
+        json.dumps(
+            {
+                "round": 1,
+                "status": "ok",
+                "reports": [
+                    {"harness": str(ok_case), "status": "ok", "classification": "completed", "exit_code": 0},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    main([
+        "merge-harnesses",
+        "--workspace-dir",
+        str(workspace),
+        "--round",
+        "1",
+    ])
+
+    report = json.loads((reports_dir / "merge_fixture.json").read_text(encoding="utf-8"))
+    assert report["crate_name"] == "fixture"
+    assert report["selected_cases"] == [str(ok_case)]
 
 
 def test_cli_compile_check_writes_report(tmp_path):

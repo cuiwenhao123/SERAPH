@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import json
 from pathlib import Path
 from typing import List, Optional
 
@@ -19,6 +20,7 @@ from seraph_rag.graph_builder import build_graph, read_graph, write_graph
 from seraph_rag.harness_codegen import write_harnesses_from_response
 from seraph_rag.harness_prompt import DEFAULT_HARNESS_STYLE, write_prompt_bundle
 from seraph_rag.knowledge_loader import load_knowledge
+from seraph_rag.merge_harnesses import write_merged_harnesses
 from seraph_rag.model_provider import write_model_response
 from seraph_rag.runtime_diagnose import run_runtime_diagnosis
 from seraph_rag.smoke_run import (
@@ -88,6 +90,10 @@ def build_parser() -> argparse.ArgumentParser:
     smoke_parser.add_argument("--report-dir")
     smoke_parser.add_argument("--round", type=int)
     smoke_parser.add_argument("--command-template", default=DEFAULT_SMOKE_COMMAND_TEMPLATE)
+
+    merge_parser = subparsers.add_parser("merge-harnesses")
+    merge_parser.add_argument("--workspace-dir", required=True)
+    merge_parser.add_argument("--round", type=int, required=True)
 
     runtime_diagnose_parser = subparsers.add_parser("runtime-diagnose")
     runtime_diagnose_parser.add_argument("--context", required=True)
@@ -253,6 +259,17 @@ def main(argv: Optional[List[str]] = None) -> None:
                 "smoke-run requires --harness/--report, --harness-glob/--report-dir/--round, or --compile-index/--report-dir/--round"
             )
         run_smoke_check(args.harness, args.report, command_template=args.command_template)
+        return
+    if args.command == "merge-harnesses":
+        crate_config = json.loads(
+            (Path(args.workspace_dir) / "crate_config.json").read_text(encoding="utf-8")
+        )
+        write_merged_harnesses(
+            workspace_dir=args.workspace_dir,
+            round_no=args.round,
+            crate_name=str(crate_config["package_name"]),
+            crate_import_name=str(crate_config["crate_import_name"]),
+        )
         return
     if args.command == "runtime-diagnose":
         run_runtime_diagnosis(
