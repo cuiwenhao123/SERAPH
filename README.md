@@ -41,8 +41,8 @@ The active v5 boundary is:
 - Phase 2 uses the Python RAG path in the active prototype.
 - Phase 2 RAG writes `workspace/vectordb/` and `workspace/graph.pkl`.
 - Phase 3 consumes `workspace/contexts/rag_target_*.md` as LLM-readable context.
-- Phase 3 active path is: retrieve → harness prompt → model response → harness write → compile-check → fix-loop → smoke-run → runtime-diagnose → coverage update.
-- Phase 3 active harness style is `aflpp`: generated harnesses are normal Rust binaries with `fn main()` that read stdin or an optional file argument, so they can be used with AFL++ file/stdin workflows.
+- Phase 3 active path is: retrieve → harness prompt → model response → harness write → compile-check → fix-loop → smoke-run → merge-harnesses → runtime-diagnose → coverage update.
+- Phase 3 active harness style is `aflpp`: the model emits small Rust case modules with `pub fn run_case(input: &[u8])`, SERAPH screens them through one-shot wrapper binaries, then SERAPH merges only passing cases into a real AFL++ target.
 - Runtime findings are written to `workspace/reports/runtime_error_*.json`.
 - `skills/harness-codegen` is the active Phase 3 generation contract; old scenario/mapping/planning skills are historical only.
 
@@ -101,7 +101,7 @@ Runtime diagnosis command fallback order is:
 2. `--fix-model-command`
 3. `--model-command`
 
-Generated Phase 3 harnesses should avoid `libfuzzer_sys` and `afl::fuzz!`; the active path now asks the model for stdlib-only Rust binaries that are easy to compile, smoke-run, repair, and feed to AFL++.
+Generated Phase 3 case modules should avoid `libfuzzer_sys` and direct `afl::fuzz!` emission. The active path now asks the model for factual `run_case` modules that are easy to compile, smoke-run, repair, and then merge into a tool-generated AFL++ target.
 
 ## Third-Party Model Template
 
@@ -160,7 +160,8 @@ It uses `workspace/crate_config.json` plus the generated harness path to:
 
 - create `workspace/_cargo_projects/<harness_stem>/`
 - write `Cargo.toml` with a path dependency on the real target crate
-- copy the harness into `src/main.rs`
+- copy the generated case module into `src/case_impl.rs`
+- write a deterministic one-shot wrapper `src/main.rs`
 - run `cargo build` for compile-check or `cargo run` for smoke-run
 
 Example:

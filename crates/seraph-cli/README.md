@@ -43,6 +43,10 @@ cargo run -p seraph-cli -- phase3 smoke-run \
   --round 1 \
   --command-template 'python3 scripts/fake_runtime.py {harness}'
 
+cargo run -p seraph-cli -- phase3 merge-harnesses \
+  --workspace-dir workspace \
+  --round 1
+
 cargo run -p seraph-cli -- phase3 runtime-diagnose \
   --context workspace/contexts/rag_target_001.md \
   --smoke-index workspace/reports/smoke_001_index.json \
@@ -64,7 +68,7 @@ cargo run -p seraph-cli -- phase3 model-response \
 
 cargo run -p seraph-cli -- phase3 afl-bootstrap \
   --workspace-dir /tmp/seraph-phase3-real-aflpp-localresp/arrayvec \
-  --harness fuzz/harness_001_01.rs \
+  --merge-report /tmp/seraph-phase3-real-aflpp-localresp/arrayvec/reports/merge_arrayvec.json \
   --dry-run
 
 cargo run -p seraph-cli -- run \
@@ -85,12 +89,12 @@ Phase 2 target selection rules:
 - `--round N` is the batch start index, so `--round 4` starts at the 4th ranked target and continues through the remaining targets.
 - `--target-api-id <api_id>` switches back to single-target mode and retrieves context for that exact unsafe target.
 - `--llm-response <path>` is single-target only, so pair it with `--target-api-id`.
-- `--afl-bootstrap` without `--afl-harness` is also single-target only, because automatic harness selection is ambiguous in batch mode.
+- `--afl-bootstrap` is also single-target only, and unified runs require `--smoke-command` so SERAPH can merge only passing cases.
 - Retrieved RAG context now includes a `Required Setup APIs` section before exploratory related APIs so deep targets keep their setup chain in view.
 
-The active `aflpp` style asks the model for plain Rust binary harnesses with `fn main()` that read stdin or an optional file argument, instead of `libfuzzer_sys` or `afl::fuzz!` macro targets.
+The active `aflpp` style asks the model for `pub fn run_case(input: &[u8])` case modules, not final binaries. SERAPH wraps those cases in one-shot executables for compile/smoke screening, then merges passing cases into a crate-level AFL++ target with a tool-generated `afl::fuzz!` entrypoint.
 
-For compile-successful Phase 3 workspaces, `phase3 afl-bootstrap` forwards to `scripts/bootstrap-fuzz-target.sh` so users can stay on the unified CLI surface while launching AFL++.
+For smoke-successful Phase 3 workspaces, `phase3 merge-harnesses` selects the passing cases and synthesizes a merged Cargo target. `phase3 afl-bootstrap` then forwards that merged target to `scripts/bootstrap-fuzz-target.sh`, which builds regular, ASan, and CmpLog variants and renders or launches the paired AFL++ campaign.
 
 When Phase 3 compile, smoke, or fix steps run, `seraph-cli run` also writes `workspace/coverage.json`.
 
@@ -110,6 +114,8 @@ cargo run -p seraph-cli -- run \
 `--smoke-command` automatically enables compile-check. The smoke stage reads successful harnesses from `compile_RRR_index.json` and, when `--fix-loop` is enabled, also includes repaired harnesses that compiled successfully in `fix_loop_RRR_index.json`.
 
 When `--smoke-command` is enabled, `run` executes smoke for every compile-successful harness. If runtime diagnosis is configured, it also writes `runtime_error_RRR_index.json`. Coverage still treats compile-successful, smoke-reaching harnesses as covered.
+
+When `--afl-bootstrap` is enabled, `run` also executes `merge-harnesses` after smoke-run, then boots a merged AFL++ campaign from the passing cases.
 
 If you rerun the same target in the same workspace, `coverage.json` now follows the latest Phase 3 result for that target. Older `validated`, `bug`, and stale harness entries for that target are replaced instead of accumulated.
 
@@ -172,7 +178,9 @@ cargo run -p seraph-cli -- run \
   --compile-command 'python3 scripts/phase3_real_crate.py compile {harness}' \
   --fix-loop \
   --fix-model-command 'python3 scripts/third_party_openai_compatible.py --input {input} --output {output}' \
-  --smoke-command 'python3 scripts/phase3_real_crate.py smoke {harness}'
+  --smoke-command 'python3 scripts/phase3_real_crate.py smoke {harness}' \
+  --afl-bootstrap \
+  --afl-build-only
 ```
 
 Compatibility examples:

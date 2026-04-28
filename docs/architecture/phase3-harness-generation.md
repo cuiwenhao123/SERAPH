@@ -23,6 +23,7 @@ Active target scope remains unchanged:
 | Harness writer | `seraph-cli phase3 harness-write` | `harness_prompt_RRR.json`, LLM markdown response | `workspace/fuzz/harness_RRR_SS.rs` |
 | Compile check | `seraph-cli phase3 compile-check` | generated harness files | `workspace/reports/compile_RRR_SS.json`, `compile_RRR_index.json` |
 | Smoke run | `seraph-cli phase3 smoke-run` | successful compile/fix-loop harnesses | `workspace/reports/smoke_RRR_SS*.json`, `smoke_RRR_index.json` |
+| Merge harnesses | `seraph-cli phase3 merge-harnesses` | workspace, round, compile/smoke/fix reports | `workspace/reports/merge_<crate>.json`, merged sources, merged Cargo project |
 | Runtime diagnose | `seraph-cli phase3 runtime-diagnose` | failed smoke reports plus target context | `workspace/reports/runtime_error_RRR_SS*.json`, `runtime_error_RRR_index.json` |
 | Fixer bundle | `seraph-cli phase3 fixer-bundle` | compile index, RAG context, failing harnesses | `workspace/fixes/fix_request_RRR_SS.json` |
 | Fix loop | `seraph-cli phase3 fix-loop` | `fix_request_RRR_SS.json`, ordered fix responses | `workspace/fuzz/harness_RRR_SS_fixed_AA.rs`, `workspace/reports/compile_RRR_SS_fixed_AA.json`, `workspace/reports/fix_loop_RRR_SS.json` |
@@ -60,31 +61,35 @@ The active Phase 3 harness style is `aflpp`.
 
 This does **not** mean SERAPH asks the model to emit `afl::fuzz!` macro targets. Instead, the active contract asks for plain Rust binary harnesses that:
 
-- define a normal `fn main()`
-- read fuzz bytes from stdin or an optional input file path argument
-- use only the Rust standard library for input ingestion
+- define `pub fn run_case(input: &[u8])`
 - preserve SERAPH markers around the target API call
-- avoid `libfuzzer_sys`, `#![no_main]`, `fuzz_target!`, and `afl::fuzz!`
+- avoid `libfuzzer_sys`, `#![no_main]`, `fuzz_target!`, and direct `afl::fuzz!` emission from the model
 
-This shape keeps the current compile-check, fix-loop, and smoke-run pipeline unchanged while making the generated program directly usable with AFL++ stdin or `@@` file workflows.
+SERAPH then wraps each case module in a deterministic one-shot executable for compile-check, fix-loop, and smoke-run. Only the cases that pass one-shot screening are merged into the final crate-level AFL++ target.
 
 ## AFL++ Launch
 
-After Phase 3 has produced a compile-successful harness workspace, use:
+After Phase 3 has produced smoke-successful case harnesses and a merge report, use:
 
 - `scripts/bootstrap-fuzz-target.sh`
 
-The script reuses the generated `_cargo_projects/<harness_stem>/Cargo.toml`, copies the latest harness source into `src/main.rs`, builds an AFL++-instrumented binary with `cargo afl build`, then launches `afl-fuzz` against either:
+The script reuses the merged Cargo project from `merge_<crate>.json`, builds three AFL++ binaries:
 
-- `@@` file mode by default
-- stdin mode when `--input-mode stdin` is requested
+- a regular merged target
+- an ASan merged target built with `AFL_USE_ASAN=1`
+- a CmpLog helper target built with `AFL_LLVM_CMPLOG=1`
+
+It then renders or launches two cooperating AFL++ jobs on the same campaign:
+
+- a primary ASan job fuzzing the ASan binary
+- a secondary CmpLog-assisted job fuzzing the regular binary with `-c <cmplog_binary>`
 
 Example:
 
 ```bash
 bash scripts/bootstrap-fuzz-target.sh \
   --workspace-dir /tmp/seraph-phase3-real-aflpp-localresp/arrayvec \
-  --harness fuzz/harness_001_01.rs
+  --merge-report /tmp/seraph-phase3-real-aflpp-localresp/arrayvec/reports/merge_arrayvec.json
 ```
 
 Dry-run example:
@@ -92,13 +97,13 @@ Dry-run example:
 ```bash
 bash scripts/bootstrap-fuzz-target.sh \
   --workspace-dir /tmp/seraph-phase3-real-aflpp-localresp/arrayvec \
-  --harness fuzz/harness_001_01.rs \
+  --merge-report /tmp/seraph-phase3-real-aflpp-localresp/arrayvec/reports/merge_arrayvec.json \
   --dry-run
 ```
 
 Prerequisites:
 
-- a compile-successful Phase 3 workspace with `_cargo_projects/`
+- a smoke-successful Phase 3 workspace with `_cargo_projects/` and `merge_<crate>.json`
 - `cargo afl` available on `PATH`
 - `afl-fuzz` available on `PATH`
 
@@ -207,9 +212,9 @@ cargo run -p seraph-cli -- phase3 harness-write \
   --round 1
 ```
 
-The writer extracts fenced Rust code blocks. If no code fence exists, it treats the full response as one Rust source file. Each generated harness must contain both `SERAPH_STEP_ENTER` and `SERAPH_STEP_OK` markers for the prompt bundle's `target_api_id`; otherwise the writer rejects the response.
+The writer extracts fenced Rust code blocks. If no code fence exists, it treats the full response as one Rust source file. Each generated case must define `pub fn run_case(input: &[u8])` and must contain both `SERAPH_STEP_ENTER` and `SERAPH_STEP_OK` markers for the prompt bundle's `target_api_id`; otherwise the writer rejects the response.
 
-Under the active `aflpp` style, the expected source shape is a normal Rust binary, not a libFuzzer- or macro-based fuzz target.
+Under the active `aflpp` style, the expected source shape is a case module, not a final binary. The one-shot wrapper and the merged AFL++ entrypoint are both tool-generated by SERAPH.
 
 The unified CLI can run retrieval, prompt creation, and response splitting together:
 
