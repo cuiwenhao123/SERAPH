@@ -21,7 +21,7 @@ def _build_system_prompt(style: str) -> str:
         raise ValueError("unsupported harness style: {}".format(style))
     return """You are SERAPH's Rust fuzz harness generation expert.
 
-Your job is to generate AFL++-friendly Rust harness variants from a structured SERAPH context.
+Your job is to generate fact-grounded Rust case modules from a structured SERAPH context for later AFL++ merged-harness execution.
 
 Primary goals, in order:
 1. Real target reachability: every variant must truly call the Target API.
@@ -31,13 +31,14 @@ Primary goals, in order:
 
 Output contract:
 - Output only Rust code blocks, one harness variant per code block.
-- Generate a normal Rust binary with `fn main()`.
-- Read fuzz bytes from stdin or an optional file path argument using only the Rust standard library.
+- Emit a Rust case module, not a full executable.
+- Define `pub fn run_case(input: &[u8])` in every variant.
 - Call the Target API in every variant.
 - Call the exact Target API path named in the context between the SERAPH markers. Do not substitute a neighboring same-owner or same-signature API.
 - Preserve exact `SERAPH_STEP_ENTER:<step_no>:<api_id>` and `SERAPH_STEP_OK:<step_no>:<api_id>` markers around each successful target call.
 - Use the crate import name specified in the context.
 - Do not use `target_lib` as a crate name.
+- Do not generate `fn main()`, `afl::fuzz!`, or crate-level registry code.
 
 How to use the context:
 - `Known Reachable Paths` are fact-grounded reachability hints surfaced from the current SERAPH context. They may be partial and are not the only allowed sequence.
@@ -87,13 +88,15 @@ def build_prompt_bundle(
 ) -> Dict[str, Any]:
     normalized_style = _normalize_style(style)
     target_api_id = extract_target_api_id(rag_context)
-    user_prompt = """Generate {variants} Rust harness variants for the SERAPH target below.
+    user_prompt = """Generate {variants} Rust case variants for the SERAPH target below.
 
 Requirements:
 - Every variant must call the Target API.
 - You may design your own setup and call sequence using the facts in the context.
+- Define `pub fn run_case(input: &[u8])` in every variant.
+- Keep all setup and the target call inside `run_case`.
 - Prefer `Related APIs` as the main construction pool.
-- Use `Known Reachable Paths` as fact-grounded reachability hints when helpful, but do not copy them mechanically.
+- Use `Known Reachable Paths` as validated anchors when helpful, but do not copy them mechanically.
 - If `Target Usage Hints` exist, prefer those documented receiver and setup shapes before inventing wrapper bridges or alternate owner views.
 - Treat `Compile-Time Facts` as authoritative.
 - If `Type Trait Facts` do not explicitly say a type is `Copy` or `Clone`, do not assume by-value indexing, repeated reuse, or `.clone()` is valid for that type.
@@ -107,8 +110,7 @@ Requirements:
 - If multiple surfaced setup APIs can honestly reach the same owner, prefer a safe concrete producer before trying an `unsafe` raw-pointer/raw-parts constructor for diversity.
 - If a trait-based or generic producer returns an owner or collection whose concrete type is not inferable at the call site, add an explicit concrete type annotation or prefer another surfaced constructor with an honest concrete owner type.
 - If a surfaced trait helper is a provided associated function rather than an inherent constructor, do not call it through the trait path unless the concrete implementor type is written explicitly.
-- Keep all logic inside a normal Rust binary `fn main()`.
-- Return only Rust code blocks, one code block per variant, with no prose outside the code blocks.
+- Return only Rust code blocks, one case module per code block, with no prose outside the code blocks.
 
 Target API id: {target_api_id}
 Harness style: {style}
