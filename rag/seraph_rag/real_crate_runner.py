@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Union
 
+from seraph_rag.case_harness import write_case_project
+
 
 @dataclass(frozen=True)
 class CrateConfig:
@@ -20,14 +22,12 @@ def ensure_cargo_project(harness_path: Union[str, Path]) -> Path:
     workspace = _workspace_dir(harness)
     config = _load_crate_config(workspace)
     project_dir = workspace / "_cargo_projects" / harness.stem
-    src_dir = project_dir / "src"
-    src_dir.mkdir(parents=True, exist_ok=True)
     package_name = _cargo_package_name(harness.stem)
-    (project_dir / "Cargo.toml").write_text(
+    write_case_project(
+        project_dir,
+        harness,
         _cargo_manifest(package_name, config),
-        encoding="utf-8",
     )
-    (src_dir / "main.rs").write_text(harness.read_text(encoding="utf-8"), encoding="utf-8")
     return project_dir
 
 
