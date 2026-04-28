@@ -399,7 +399,8 @@ impl Buffer {{
     }}
 }}
 
-fn main() {{
+pub fn run_case(input: &[u8]) {{
+    let _ = input;
     let buffer = Buffer;
     println!("SERAPH_STEP_ENTER:1:{target}");
     let _ = unsafe {{ buffer.get_unchecked(0) }};
@@ -415,7 +416,8 @@ impl Cursor {{
     }}
 }}
 
-fn main() {{
+pub fn run_case(input: &[u8]) {{
+    let _ = input;
     let mut cursor = Cursor;
     println!("SERAPH_STEP_ENTER:1:{target}");
     cursor.advance(1);
@@ -485,7 +487,8 @@ impl Buffer {{
     }}
 }}
 
-fn main() {{
+pub fn run_case(input: &[u8]) {{
+    let _ = input;
     let buffer = Buffer;
     println!("SERAPH_STEP_ENTER:1:{target}");
     let _ = unsafe {{ buffer.get_unchecked(0) }};
@@ -501,7 +504,8 @@ impl Cursor {{
     }}
 }}
 
-fn main() {{
+pub fn run_case(input: &[u8]) {{
+    let _ = input;
     let mut cursor = Cursor;
     println!("SERAPH_STEP_ENTER:1:{target}");
     cursor.advance(1);
@@ -585,7 +589,7 @@ fn run_pipeline_injects_pythonpath_for_python_subcli() {
         r#"import json, sys
 prompt = json.load(open(sys.argv[1], "r", encoding="utf-8"))
 target = prompt["target_api_id"]
-print(f'fn main() {{ println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); }}')
+print(f'pub fn run_case(input: &[u8]) {{ let _ = input; println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); }}')
 "#,
     )
     .expect("write model script");
@@ -633,7 +637,7 @@ fn run_smoke_writes_found_bug_to_coverage_json() {
         r#"import json, sys
 prompt = json.load(open(sys.argv[1], "r", encoding="utf-8"))
 target = prompt["target_api_id"]
-print(f'fn main() {{ println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); }}')
+print(f'pub fn run_case(input: &[u8]) {{ let _ = input; println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); }}')
 "#,
     )
     .expect("write model script");
@@ -704,7 +708,7 @@ fn run_smoke_failure_still_writes_validated_coverage_and_runtime_error_index() {
         r#"import json, sys
 prompt = json.load(open(sys.argv[1], "r", encoding="utf-8"))
 target = prompt["target_api_id"]
-print(f'fn main() {{ println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); }}')
+print(f'pub fn run_case(input: &[u8]) {{ let _ = input; println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); }}')
 "#,
     )
     .expect("write model script");
@@ -773,7 +777,7 @@ fn run_rerun_overwrites_previous_validated_coverage_with_latest_attempted_result
         r#"import json, sys
 prompt = json.load(open(sys.argv[1], "r", encoding="utf-8"))
 target = prompt["target_api_id"]
-print(f'fn main() {{ println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); }}')
+print(f'pub fn run_case(input: &[u8]) {{ let _ = input; println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); }}')
 "#,
     )
     .expect("write model script");
@@ -867,9 +871,9 @@ payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
 version = payload["version"]
 target = payload.get("target_api_id", "fn::fixture_crate::Buffer::get_unchecked")
 if version == "seraph.phase3.prompt.v1":
-    print(f'fn main() {{ println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); BROKEN }}')
+    print(f'pub fn run_case(input: &[u8]) {{ let _ = input; println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); /* BROKEN */ }}')
 elif version == "seraph.phase3.compile_fixer_request.v1":
-    print(f'fn main() {{ println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); }}')
+    print(f'pub fn run_case(input: &[u8]) {{ let _ = input; println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); }}')
 else:
     raise SystemExit(version)
 "#,
@@ -977,9 +981,9 @@ payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
 version = payload["version"]
 target = payload.get("target_api_id", "fn::fixture_crate::Buffer::get_unchecked")
 if version == "seraph.phase3.prompt.v1":
-    print(f'fn main() {{ println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); BROKEN }}')
+    print(f'pub fn run_case(input: &[u8]) {{ let _ = input; println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); /* BROKEN */ }}')
 elif version == "seraph.phase3.compile_fixer_request.v1":
-    print(f'fn main() {{ println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); }}')
+    print(f'pub fn run_case(input: &[u8]) {{ let _ = input; println!("SERAPH_STEP_ENTER:1:{target}"); println!("SERAPH_STEP_OK:1:{target}"); }}')
 else:
     raise SystemExit(version)
 "#,
@@ -1098,11 +1102,18 @@ print(binary)
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let fixed_binary = workspace.join("_afl_target/debug/harness_001_01_fixed_01");
-    assert!(fixed_binary.exists());
-    assert!(!workspace.join("_afl_target/debug/harness_001_01").exists());
-    let project_main =
-        fs::read_to_string(workspace.join("_cargo_projects/harness_001_01_fixed_01/src/main.rs"))
-            .expect("read fixed project main");
-    assert!(!project_main.contains("BROKEN"));
+    let regular_binary = workspace.join("_afl_target/regular/debug/merged_fixture_crate");
+    let asan_binary = workspace.join("_afl_target/asan/debug/merged_fixture_crate");
+    let cmplog_binary = workspace.join("_afl_target/cmplog/debug/merged_fixture_crate");
+    assert!(regular_binary.exists());
+    assert!(asan_binary.exists());
+    assert!(cmplog_binary.exists());
+    let selected_cases =
+        fs::read_to_string(workspace.join("fuzz/fixture_crate/merged/selected_cases.txt"))
+            .expect("read selected cases");
+    assert!(selected_cases.contains("harness_001_01_fixed_01.rs"));
+    let merged_main =
+        fs::read_to_string(workspace.join("_cargo_projects/merged_fixture_crate/src/main.rs"))
+            .expect("read merged project main");
+    assert!(merged_main.contains("afl::fuzz!"));
 }

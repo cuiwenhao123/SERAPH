@@ -177,6 +177,16 @@ pub fn phase3_smoke_run_plan(
     python_module_plan(args)
 }
 
+pub fn phase3_merge_harnesses_plan(workspace_dir: &str, round: &str) -> CommandPlan {
+    python_module_plan(vec![
+        "merge-harnesses".to_string(),
+        "--workspace-dir".to_string(),
+        workspace_dir.to_string(),
+        "--round".to_string(),
+        round.to_string(),
+    ])
+}
+
 pub fn phase3_runtime_diagnose_plan(
     context: &str,
     smoke_index: &str,
@@ -419,7 +429,7 @@ pub fn phase3_model_response_plan(
 #[allow(clippy::too_many_arguments)]
 pub fn phase3_afl_bootstrap_plan(
     workspace_dir: &str,
-    harness: &str,
+    merge_report: &str,
     input_mode: Option<&str>,
     corpus_dir: Option<&str>,
     findings_dir: Option<&str>,
@@ -430,8 +440,8 @@ pub fn phase3_afl_bootstrap_plan(
     let mut args = vec![
         "--workspace-dir".to_string(),
         workspace_dir.to_string(),
-        "--harness".to_string(),
-        harness.to_string(),
+        "--merge-report".to_string(),
+        merge_report.to_string(),
     ];
     if let Some(value) = input_mode {
         args.push("--input-mode".to_string());
@@ -534,6 +544,18 @@ mod tests {
     }
 
     #[test]
+    fn phase3_merge_harnesses_plan_uses_python_sub_cli() {
+        let plan = phase3_merge_harnesses_plan("workspace", "1");
+
+        assert_eq!(plan.program, "python3");
+        assert!(plan.args.contains(&"merge-harnesses".to_string()));
+        assert!(plan.args.contains(&"--workspace-dir".to_string()));
+        assert!(plan.args.contains(&"workspace".to_string()));
+        assert!(plan.args.contains(&"--round".to_string()));
+        assert!(plan.args.contains(&"1".to_string()));
+    }
+
+    #[test]
     fn phase3_runtime_diagnose_plan_uses_python_sub_cli() {
         let plan = phase3_runtime_diagnose_plan(
             "workspace/contexts/rag_target_001.md",
@@ -617,7 +639,7 @@ mod tests {
     fn phase3_afl_bootstrap_plan_uses_script_entrypoint() {
         let plan = phase3_afl_bootstrap_plan(
             "workspace",
-            "fuzz/harness_001_01.rs",
+            "workspace/reports/merge_fixture.json",
             Some("stdin"),
             None,
             None,
@@ -630,8 +652,10 @@ mod tests {
         assert!(plan.args[0].contains("scripts/bootstrap-fuzz-target.sh"));
         assert!(plan.args.contains(&"--workspace-dir".to_string()));
         assert!(plan.args.contains(&"workspace".to_string()));
-        assert!(plan.args.contains(&"--harness".to_string()));
-        assert!(plan.args.contains(&"fuzz/harness_001_01.rs".to_string()));
+        assert!(plan.args.contains(&"--merge-report".to_string()));
+        assert!(plan
+            .args
+            .contains(&"workspace/reports/merge_fixture.json".to_string()));
         assert!(plan.args.contains(&"--input-mode".to_string()));
         assert!(plan.args.contains(&"stdin".to_string()));
         assert!(plan.args.contains(&"--build-only".to_string()));

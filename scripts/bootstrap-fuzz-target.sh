@@ -4,11 +4,11 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/bootstrap-fuzz-target.sh --workspace-dir <path> --harness <path> [options] [-- <extra afl-fuzz args>]
+  scripts/bootstrap-fuzz-target.sh --workspace-dir <path> --merge-report <path> [options] [-- <extra afl-fuzz args>]
 
 Options:
   --workspace-dir <path>   Phase 3 workspace containing `fuzz/` and `_cargo_projects/`
-  --harness <path>         Harness source path, absolute or relative to `--workspace-dir`
+  --merge-report <path>    Merge report JSON path, absolute or relative to `--workspace-dir`
   --input-mode <mode>      `file` (default, pass `@@`) or `stdin`
   --corpus-dir <path>      Override seed corpus directory
   --findings-dir <path>    Override AFL++ findings directory
@@ -24,8 +24,8 @@ Environment overrides:
   AFL_*                     Passed through to the underlying AFL++ tools
 
 Notes:
-  - This script expects the Phase 3 compile/smoke pipeline to have already created
-    `_cargo_projects/<harness_stem>/Cargo.toml`.
+  - This script expects the Phase 3 merge step to have already created
+    `_cargo_projects/merged_<crate>/Cargo.toml` plus a merge report.
   - If the corpus directory is empty, the script writes a default `seed.bin`.
 EOF
 }
@@ -60,7 +60,7 @@ ensure_command_invocation() {
 }
 
 workspace_dir=""
-harness_arg=""
+merge_report_arg=""
 input_mode="file"
 corpus_dir=""
 findings_dir=""
@@ -77,9 +77,9 @@ while (($#)); do
       workspace_dir="$2"
       shift 2
       ;;
-    --harness)
-      [[ $# -ge 2 ]] || fail "missing value for --harness"
-      harness_arg="$2"
+    --merge-report)
+      [[ $# -ge 2 ]] || fail "missing value for --merge-report"
+      merge_report_arg="$2"
       shift 2
       ;;
     --input-mode)
@@ -130,33 +130,43 @@ while (($#)); do
 done
 
 [[ -n "$workspace_dir" ]] || fail "missing required flag: --workspace-dir"
-[[ -n "$harness_arg" ]] || fail "missing required flag: --harness"
+[[ -n "$merge_report_arg" ]] || fail "missing required flag: --merge-report"
 
 mkdir -p "$workspace_dir"
 workspace_dir="$(cd "$workspace_dir" && pwd)"
 
-if [[ "$harness_arg" = /* ]]; then
-  harness_path="$harness_arg"
+if [[ "$merge_report_arg" = /* ]]; then
+  merge_report_path="$merge_report_arg"
 else
-  harness_path="$workspace_dir/$harness_arg"
+  merge_report_path="$workspace_dir/$merge_report_arg"
 fi
 
-[[ -f "$harness_path" ]] || fail "harness not found: $harness_path"
+[[ -f "$merge_report_path" ]] || fail "merge report not found: $merge_report_path"
+merge_report_path="$(cd "$(dirname "$merge_report_path")" && pwd)/$(basename "$merge_report_path")"
 
-harness_path="$(cd "$(dirname "$harness_path")" && pwd)/$(basename "$harness_path")"
-harness_stem="$(basename "${harness_path%.rs}")"
+read -r manifest_path target_name < <(
+  python3 - "$merge_report_path" <<'PY'
+import json
+import sys
+payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
+print(payload["manifest_path"], payload["target_name"])
+PY
+)
 
-project_dir="$workspace_dir/_cargo_projects/$harness_stem"
-manifest_path="$project_dir/Cargo.toml"
-project_src="$project_dir/src/main.rs"
+[[ -n "$manifest_path" ]] || fail "merge report missing manifest_path"
+[[ -n "$target_name" ]] || fail "merge report missing target_name"
+[[ -f "$manifest_path" ]] || fail "missing merged Cargo manifest: $manifest_path"
 
-[[ -f "$manifest_path" ]] || fail "missing Cargo project for harness: $manifest_path"
-
-campaign_root="$workspace_dir/afl/$harness_stem"
+campaign_root="$workspace_dir/afl/$target_name"
 corpus_dir="${corpus_dir:-$campaign_root/corpus}"
 findings_dir="${findings_dir:-$campaign_root/findings}"
 afl_target_dir="${afl_target_dir:-$workspace_dir/_afl_target}"
-binary_path="$afl_target_dir/$build_profile/$harness_stem"
+regular_target_dir="$afl_target_dir/regular"
+asan_target_dir="$afl_target_dir/asan"
+cmplog_target_dir="$afl_target_dir/cmplog"
+regular_binary="$regular_target_dir/$build_profile/$target_name"
+asan_binary="$asan_target_dir/$build_profile/$target_name"
+cmplog_binary="$cmplog_target_dir/$build_profile/$target_name"
 
 case "$input_mode" in
   file|stdin) ;;
@@ -168,32 +178,49 @@ esac
 read -r -a cargo_afl_cmd <<< "${SERAPH_CARGO_AFL_COMMAND:-cargo afl}"
 read -r -a afl_fuzz_cmd <<< "${SERAPH_AFL_FUZZ_COMMAND:-afl-fuzz}"
 
-build_cmd=(env "CARGO_TARGET_DIR=$afl_target_dir" "${cargo_afl_cmd[@]}" build)
+build_regular_cmd=(env "CARGO_TARGET_DIR=$regular_target_dir" "${cargo_afl_cmd[@]}" build)
+build_asan_cmd=(env "CARGO_TARGET_DIR=$asan_target_dir" AFL_USE_ASAN=1 "${cargo_afl_cmd[@]}" build)
+build_cmplog_cmd=(env "CARGO_TARGET_DIR=$cmplog_target_dir" AFL_LLVM_CMPLOG=1 "${cargo_afl_cmd[@]}" build)
 if [[ "$build_profile" == "release" ]]; then
-  build_cmd+=(--release)
+  build_regular_cmd+=(--release)
+  build_asan_cmd+=(--release)
+  build_cmplog_cmd+=(--release)
 fi
-build_cmd+=(--manifest-path "$manifest_path")
+build_regular_cmd+=(--manifest-path "$manifest_path" --features seraph_afl)
+build_asan_cmd+=(--manifest-path "$manifest_path" --features seraph_afl)
+build_cmplog_cmd+=(--manifest-path "$manifest_path" --features seraph_afl)
 
-target_cmd=("$binary_path")
+regular_target_cmd=("$regular_binary")
+asan_target_cmd=("$asan_binary")
 if [[ "$input_mode" == "file" ]]; then
-  target_cmd+=("@@")
+  regular_target_cmd+=("@@")
+  asan_target_cmd+=("@@")
 fi
 
-fuzz_cmd=("${afl_fuzz_cmd[@]}")
+asan_fuzz_cmd=("${afl_fuzz_cmd[@]}" -M asan_main)
+cmplog_fuzz_cmd=("${afl_fuzz_cmd[@]}" -S cmplog_aux)
 if ((${#extra_afl_args[@]})); then
-  fuzz_cmd+=("${extra_afl_args[@]}")
+  asan_fuzz_cmd+=("${extra_afl_args[@]}")
+  cmplog_fuzz_cmd+=("${extra_afl_args[@]}")
 fi
-fuzz_cmd+=(-i "$corpus_dir" -o "$findings_dir" -- "${target_cmd[@]}")
+asan_fuzz_cmd+=(-i "$corpus_dir" -o "$findings_dir" -- "${asan_target_cmd[@]}")
+cmplog_fuzz_cmd+=(-i "$corpus_dir" -o "$findings_dir" -c "$cmplog_binary" -- "${regular_target_cmd[@]}")
 
 echo "workspace=$workspace_dir"
-echo "harness=$harness_path"
+echo "merge_report=$merge_report_path"
 echo "manifest=$manifest_path"
-echo "binary=$binary_path"
-echo "build=$(render_cmd "${build_cmd[@]}")"
+echo "regular_binary=$regular_binary"
+echo "asan_binary=$asan_binary"
+echo "cmplog_binary=$cmplog_binary"
+echo "build_regular=$(render_cmd "${build_regular_cmd[@]}")"
+echo "build_asan=$(render_cmd "${build_asan_cmd[@]}")"
+echo "build_cmplog=$(render_cmd "${build_cmplog_cmd[@]}")"
 if ((build_only)); then
-  echo "afl_fuzz=skipped (--build-only)"
+  echo "asan_fuzz=skipped (--build-only)"
+  echo "cmplog_fuzz=skipped (--build-only)"
 else
-  echo "afl_fuzz=$(render_cmd "${fuzz_cmd[@]}")"
+  echo "asan_fuzz=$(render_cmd "${asan_fuzz_cmd[@]}")"
+  echo "cmplog_fuzz=$(render_cmd "${cmplog_fuzz_cmd[@]}")"
 fi
 
 if ((dry_run)); then
@@ -206,9 +233,6 @@ if (( ! build_only )); then
   ensure_command "${afl_fuzz_cmd[0]}"
 fi
 
-mkdir -p "$(dirname "$project_src")"
-cp "$harness_path" "$project_src"
-
 mkdir -p "$corpus_dir"
 if ! find "$corpus_dir" -type f -print -quit | grep -q .; then
   head -c 64 /dev/zero > "$corpus_dir/seed.bin"
@@ -218,14 +242,26 @@ if [[ -d "$findings_dir" ]] && find "$findings_dir" -mindepth 1 -print -quit | g
   fail "findings directory already contains data: $findings_dir"
 fi
 
-"${build_cmd[@]}"
+"${build_regular_cmd[@]}"
+"${build_asan_cmd[@]}"
+"${build_cmplog_cmd[@]}"
 
-if [[ ! -x "$binary_path" ]]; then
-  fail "instrumented binary was not produced: $binary_path"
+if [[ ! -x "$regular_binary" ]]; then
+  fail "instrumented binary was not produced: $regular_binary"
+fi
+if [[ ! -x "$asan_binary" ]]; then
+  fail "instrumented binary was not produced: $asan_binary"
+fi
+if [[ ! -x "$cmplog_binary" ]]; then
+  fail "instrumented binary was not produced: $cmplog_binary"
 fi
 
 if ((build_only)); then
   exit 0
 fi
 
-"${fuzz_cmd[@]}"
+"${asan_fuzz_cmd[@]}" &
+asan_pid=$!
+trap 'kill "$asan_pid" 2>/dev/null || true' EXIT
+"${cmplog_fuzz_cmd[@]}"
+wait "$asan_pid"

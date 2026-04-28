@@ -107,8 +107,8 @@ fn phase3_afl_bootstrap_dry_run_prints_script_command() {
             "afl-bootstrap",
             "--workspace-dir",
             "/tmp/seraph-phase3-real-aflpp-localresp/arrayvec",
-            "--harness",
-            "fuzz/harness_001_01.rs",
+            "--merge-report",
+            "/tmp/seraph-phase3-real-aflpp-localresp/arrayvec/reports/merge_arrayvec.json",
             "--input-mode",
             "stdin",
             "--build-only",
@@ -121,13 +121,15 @@ fn phase3_afl_bootstrap_dry_run_prints_script_command() {
     let stdout = String::from_utf8(output.stdout).expect("stdout utf8");
     assert!(stdout.contains("bootstrap-fuzz-target.sh"));
     assert!(stdout.contains("--workspace-dir /tmp/seraph-phase3-real-aflpp-localresp/arrayvec"));
-    assert!(stdout.contains("--harness fuzz/harness_001_01.rs"));
+    assert!(stdout.contains(
+        "--merge-report /tmp/seraph-phase3-real-aflpp-localresp/arrayvec/reports/merge_arrayvec.json"
+    ));
     assert!(stdout.contains("--input-mode stdin"));
     assert!(stdout.contains("--build-only"));
 }
 
 #[test]
-fn run_dry_run_prints_afl_bootstrap_command() {
+fn run_dry_run_prints_merge_harnesses_before_afl_bootstrap() {
     let binary = env!("CARGO_BIN_EXE_seraph-cli");
     let output = Command::new(binary)
         .args([
@@ -143,9 +145,9 @@ fn run_dry_run_prints_afl_bootstrap_command() {
             "--llm-response",
             "/tmp/seraph-llm-response.md",
             "--compile-check",
+            "--smoke-command",
+            "python3 -c \"import sys; sys.exit(0)\"",
             "--afl-bootstrap",
-            "--afl-harness",
-            "fuzz/harness_007_01.rs",
             "--afl-build-only",
             "--afl-input-mode",
             "stdin",
@@ -157,8 +159,10 @@ fn run_dry_run_prints_afl_bootstrap_command() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("stdout utf8");
     assert!(stdout.contains("python3 -m seraph_rag.cli compile-check"));
+    assert!(stdout.contains("python3 -m seraph_rag.cli smoke-run"));
+    assert!(stdout.contains("python3 -m seraph_rag.cli merge-harnesses"));
     assert!(stdout.contains("bootstrap-fuzz-target.sh"));
-    assert!(stdout.contains("--harness fuzz/harness_007_01.rs"));
+    assert!(stdout.contains("--merge-report /tmp/seraph-run-test/reports/merge_fixture_crate.json"));
     assert!(stdout.contains("--input-mode stdin"));
     assert!(stdout.contains("--build-only"));
 }

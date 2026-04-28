@@ -12,8 +12,9 @@ use seraph_cli::{
     phase3_fix_acceptance_plan, phase3_fix_acceptance_write_batch_plan,
     phase3_fix_acceptance_write_plan, phase3_fix_loop_batch_plan, phase3_fix_loop_plan,
     phase3_fix_once_plan, phase3_fixer_bundle_plan, phase3_fixer_write_plan,
-    phase3_harness_prompt_plan, phase3_harness_write_plan, phase3_model_response_plan,
-    phase3_runtime_diagnose_plan, phase3_smoke_run_plan, run_layout, CommandPlan,
+    phase3_harness_prompt_plan, phase3_harness_write_plan, phase3_merge_harnesses_plan,
+    phase3_model_response_plan, phase3_runtime_diagnose_plan, phase3_smoke_run_plan, run_layout,
+    CommandPlan,
 };
 use serde_json::Value;
 
@@ -104,7 +105,6 @@ fn run_pipeline(args: &[String], dry_run: bool) -> Result<(), String> {
     let fix_model_command = optional_value(args, "--fix-model-command");
     let runtime_model_command = optional_value(args, "--runtime-model-command");
     let afl_bootstrap = has_flag(args, "--afl-bootstrap");
-    let afl_harness = optional_value(args, "--afl-harness");
     let afl_input_mode = optional_value(args, "--afl-input-mode");
     let afl_corpus_dir = optional_value(args, "--afl-corpus-dir");
     let afl_findings_dir = optional_value(args, "--afl-findings-dir");
@@ -125,10 +125,13 @@ fn run_pipeline(args: &[String], dry_run: bool) -> Result<(), String> {
             "--llm-response is single-target only; use --model-command for batch runs or pass --target-api-id".to_string(),
         );
     }
-    if batch_mode && afl_bootstrap && afl_harness.is_none() {
+    if batch_mode && afl_bootstrap {
         return Err(
-            "--afl-bootstrap without --afl-harness is ambiguous in batch mode; pass --target-api-id or --afl-harness".to_string(),
+            "--afl-bootstrap is single-target only; pass --target-api-id".to_string(),
         );
+    }
+    if afl_bootstrap && !smoke_run {
+        return Err("--afl-bootstrap requires --smoke-command so passing cases can be merged".to_string());
     }
 
     if !dry_run {
@@ -283,6 +286,30 @@ fn run_pipeline(args: &[String], dry_run: bool) -> Result<(), String> {
                 dry_run,
             )?;
         }
+        if afl_bootstrap {
+            let merge_report = predicted_merge_report_path(
+                workspace,
+                round,
+                scheduled.api_id.as_deref(),
+            )?;
+            run_or_print(
+                phase3_merge_harnesses_plan(workspace, &round.to_string()),
+                dry_run,
+            )?;
+            run_or_print(
+                phase3_afl_bootstrap_plan(
+                    workspace,
+                    &merge_report,
+                    afl_input_mode,
+                    afl_corpus_dir,
+                    afl_findings_dir,
+                    afl_target_dir,
+                    afl_release,
+                    afl_build_only,
+                ),
+                dry_run,
+            )?;
+        }
 
         if !dry_run {
             println!("RAG context written to {}", layout.context);
@@ -319,6 +346,14 @@ fn run_pipeline(args: &[String], dry_run: bool) -> Result<(), String> {
                     layout.runtime_error_index
                 );
             }
+            if afl_bootstrap {
+                let merge_report = predicted_merge_report_path(
+                    workspace,
+                    round,
+                    scheduled.api_id.as_deref(),
+                )?;
+                println!("Phase 3 merge report written to {}", merge_report);
+            }
             if phase3_prompt || compile_check || fix_loop {
                 let coverage = write_coverage_from_phase3(
                     Path::new(&layout.coverage),
@@ -349,47 +384,6 @@ fn run_pipeline(args: &[String], dry_run: bool) -> Result<(), String> {
                     layout.coverage, coverage.status
                 );
             }
-        }
-    }
-
-    if !dry_run && afl_bootstrap {
-        let layout = run_layout(workspace, start_round);
-        let selected_harness = select_afl_harness(&layout, afl_harness).map_err(|message| {
-            format!("failed to select harness for AFL bootstrap: {message}")
-        })?;
-        println!(
-            "Phase 3 AFL bootstrap harness selected: {}",
-            selected_harness
-        );
-        execute(phase3_afl_bootstrap_plan(
-            workspace,
-            &selected_harness,
-            afl_input_mode,
-            afl_corpus_dir,
-            afl_findings_dir,
-            afl_target_dir,
-            afl_release,
-            afl_build_only,
-        ))?;
-    } else if afl_bootstrap {
-        if let Some(harness) = afl_harness {
-            run_or_print(
-                phase3_afl_bootstrap_plan(
-                    workspace,
-                    harness,
-                    afl_input_mode,
-                    afl_corpus_dir,
-                    afl_findings_dir,
-                    afl_target_dir,
-                    afl_release,
-                    afl_build_only,
-                ),
-                true,
-            )?;
-        } else {
-            println!(
-                "# afl-bootstrap -> runtime auto-select from successful fixed/original harness"
-            );
         }
     }
     Ok(())
@@ -562,6 +556,10 @@ fn parse_phase3(args: &[String]) -> Result<CommandPlan, String> {
             required_value(args, "--round")?,
             required_value(args, "--command-template")?,
         )),
+        Some("merge-harnesses") => Ok(phase3_merge_harnesses_plan(
+            required_value(args, "--workspace-dir")?,
+            required_value(args, "--round")?,
+        )),
         Some("runtime-diagnose") => Ok(phase3_runtime_diagnose_plan(
             required_value(args, "--context")?,
             required_value(args, "--smoke-index")?,
@@ -632,7 +630,7 @@ fn parse_phase3(args: &[String]) -> Result<CommandPlan, String> {
         )),
         Some("afl-bootstrap") => Ok(phase3_afl_bootstrap_plan(
             required_value(args, "--workspace-dir")?,
-            required_value(args, "--harness")?,
+            required_value(args, "--merge-report")?,
             optional_value(args, "--input-mode"),
             optional_value(args, "--corpus-dir"),
             optional_value(args, "--findings-dir"),
@@ -766,91 +764,26 @@ fn repo_rag_dir() -> PathBuf {
         .join("rag")
 }
 
-fn select_afl_harness(
-    layout: &seraph_cli::RunLayout,
-    override_harness: Option<&str>,
+fn predicted_merge_report_path(
+    workspace_dir: &str,
+    round: u32,
+    target_api_id: Option<&str>,
 ) -> Result<String, String> {
-    if let Some(harness) = override_harness {
-        return Ok(harness.to_string());
-    }
-
-    let fix_loop_path = Path::new(&layout.fix_loop_index);
-    if fix_loop_path.exists() {
-        if let Some(harness) = first_successful_fixed_harness(fix_loop_path)? {
-            return Ok(harness);
-        }
-    }
-
-    let compile_index_path = Path::new(&layout.compile_index);
-    if compile_index_path.exists() {
-        if let Some(harness) = first_successful_compile_harness(compile_index_path)? {
-            return Ok(harness);
-        }
-    }
-
-    Err("no successful compile/fix harness available".to_string())
+    let Some(target_api_id) = target_api_id else {
+        return Err(format!(
+            "cannot predict merge report path for round {} without target API id",
+            round
+        ));
+    };
+    let crate_name = crate_segment_from_api_id(target_api_id)
+        .ok_or_else(|| format!("cannot infer crate name from target API id `{target_api_id}`"))?;
+    Ok(format!("{workspace_dir}/reports/merge_{crate_name}.json"))
 }
 
-fn first_successful_fixed_harness(index_path: &Path) -> Result<Option<String>, String> {
-    let payload = read_json(index_path)?;
-    let Some(loops) = payload.get("loops").and_then(Value::as_array) else {
-        return Ok(None);
-    };
-
-    for loop_entry in loops {
-        if loop_entry.get("status").and_then(Value::as_str) != Some("ok") {
-            continue;
-        }
-        let successful_attempt = loop_entry.get("successful_attempt").and_then(Value::as_u64);
-        let Some(attempts) = fixed_loop_attempts(loop_entry)? else {
-            continue;
-        };
-        for attempt in attempts {
-            if attempt.get("status").and_then(Value::as_str) != Some("ok") {
-                continue;
-            }
-            if let Some(expected) = successful_attempt {
-                if attempt.get("attempt").and_then(Value::as_u64) != Some(expected) {
-                    continue;
-                }
-            }
-            if let Some(harness) = attempt.get("harness").and_then(Value::as_str) {
-                return Ok(Some(harness.to_string()));
-            }
-        }
-    }
-
-    Ok(None)
-}
-
-fn fixed_loop_attempts(loop_entry: &Value) -> Result<Option<Vec<Value>>, String> {
-    if let Some(attempts) = loop_entry.get("attempts").and_then(Value::as_array) {
-        return Ok(Some(attempts.clone()));
-    }
-    let Some(report_path) = loop_entry.get("report").and_then(Value::as_str) else {
-        return Ok(None);
-    };
-    let report = read_json(Path::new(report_path))?;
-    let Some(attempts) = report.get("attempts").and_then(Value::as_array) else {
-        return Ok(None);
-    };
-    Ok(Some(attempts.clone()))
-}
-
-fn first_successful_compile_harness(index_path: &Path) -> Result<Option<String>, String> {
-    let payload = read_json(index_path)?;
-    let Some(reports) = payload.get("reports").and_then(Value::as_array) else {
-        return Ok(None);
-    };
-    for report in reports {
-        if report.get("status").and_then(Value::as_str) != Some("ok") {
-            continue;
-        }
-        if let Some(harness) = report.get("harness").and_then(Value::as_str) {
-            return Ok(Some(harness.to_string()));
-        }
-    }
-    Ok(None)
+fn crate_segment_from_api_id(api_id: &str) -> Option<String> {
+    let mut parts = api_id.split("::");
+    parts.next()?;
+    parts.next().map(|value| value.to_string())
 }
 
 fn read_json(path: &Path) -> Result<Value, String> {
@@ -919,6 +852,7 @@ Usage:\n\
   seraph-cli phase3 harness-prompt --context <path> --output <path> [--variants <n>] [--style <aflpp>] [--dry-run]\n\
   seraph-cli phase3 harness-write --prompt <path> --response <path> --output-dir <path> --round <n> [--dry-run]\n\
   seraph-cli phase3 compile-check --harness-glob <glob> --report-dir <path> --round <n> [--command-template <cmd>] [--dry-run]\n\
+  seraph-cli phase3 merge-harnesses --workspace-dir <path> --round <n> [--dry-run]\n\
   seraph-cli phase3 runtime-diagnose --context <path> --smoke-index <path> --output-dir <path> --round <n> --command-template <cmd> [--dry-run]\n\
   seraph-cli phase3 fixer-bundle --compile-index <path> --context <path> --output-dir <path> [--dry-run]
   seraph-cli phase3 fixer-write --request <path> --response <path> --output-dir <path> --attempt <n> [--dry-run]
@@ -929,12 +863,12 @@ Usage:\n\
   seraph-cli phase3 fix-acceptance-write --index <path> --harness <path> --status <accepted|needs_review|bug> --reason <text> [--source <text>] [--coverage <path> --context <path>] [--dry-run]
   seraph-cli phase3 fix-acceptance-write-batch --index <path> --decisions <path> [--source <text>] [--coverage <path> --context <path>] [--dry-run]
   seraph-cli phase3 model-response --input <path> --output <path> --command-template <cmd> [--attempt <n>] [--dry-run]
-  seraph-cli phase3 afl-bootstrap --workspace-dir <path> --harness <path> [--input-mode <file|stdin>] [--corpus-dir <path>] [--findings-dir <path>] [--afl-target-dir <path>] [--release] [--build-only] [--dry-run]
-  seraph-cli run (--knowledge <path> | --manifest-path <path>) [--workspace-dir <path>] [--round <n>] [--target-api-id <api_id>] [--phase3-prompt] [--variants <n>] [--phase3-style <aflpp>] [--llm-response <path>] [--model-command <cmd>] [--compile-check] [--compile-command <cmd>] [--fixer-bundle] [--fix-loop] [--fix-max-attempts <n>] [--fix-responses-dir <path>] [--fix-model-command <cmd>] [--smoke-command <cmd>] [--runtime-model-command <cmd>] [--afl-bootstrap] [--afl-harness <path>] [--afl-input-mode <file|stdin>] [--afl-corpus-dir <path>] [--afl-findings-dir <path>] [--afl-target-dir <path>] [--afl-release] [--afl-build-only] [--dry-run]
+  seraph-cli phase3 afl-bootstrap --workspace-dir <path> --merge-report <path> [--input-mode <file|stdin>] [--corpus-dir <path>] [--findings-dir <path>] [--afl-target-dir <path>] [--release] [--build-only] [--dry-run]
+  seraph-cli run (--knowledge <path> | --manifest-path <path>) [--workspace-dir <path>] [--round <n>] [--target-api-id <api_id>] [--phase3-prompt] [--variants <n>] [--phase3-style <aflpp>] [--llm-response <path>] [--model-command <cmd>] [--compile-check] [--compile-command <cmd>] [--fixer-bundle] [--fix-loop] [--fix-max-attempts <n>] [--fix-responses-dir <path>] [--fix-model-command <cmd>] [--smoke-command <cmd>] [--runtime-model-command <cmd>] [--afl-bootstrap] [--afl-input-mode <file|stdin>] [--afl-corpus-dir <path>] [--afl-findings-dir <path>] [--afl-target-dir <path>] [--afl-release] [--afl-build-only] [--dry-run]
 \
 Notes:\n\
   - `run` without `--target-api-id` iterates all ranked unsafe targets starting from `--round`.\n\
   - `--llm-response` is single-target only; pair it with `--target-api-id`.\n\
-  - `--afl-bootstrap` without `--afl-harness` is single-target only."
+  - `--afl-bootstrap` is single-target only and requires `--smoke-command` in unified runs."
     );
 }
