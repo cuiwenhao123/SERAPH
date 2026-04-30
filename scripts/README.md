@@ -17,8 +17,8 @@ Available helper entrypoints:
 
 `bootstrap-fuzz-target.sh` expects:
 
-- a Phase 3 workspace that already contains `_cargo_projects/<harness_stem>/Cargo.toml`
-- a generated harness under `fuzz/`
+- a Phase 3 workspace that already contains the merged-harness Cargo manifest referenced by the merge report, typically `_cargo_projects/merged_<crate>/Cargo.toml`
+- a merge report JSON from `phase3 merge-harnesses`
 - `cargo afl` and `afl-fuzz` available on `PATH` (or overridden with `SERAPH_CARGO_AFL_COMMAND` / `SERAPH_AFL_FUZZ_COMMAND`)
 
 Merged-harness AFL++ flow:
@@ -33,7 +33,7 @@ Example:
 ```bash
 bash scripts/bootstrap-fuzz-target.sh \
   --workspace-dir /tmp/seraph-phase3-real-aflpp-localresp/arrayvec \
-  --harness fuzz/harness_001_01.rs
+  --merge-report /tmp/seraph-phase3-real-aflpp-localresp/arrayvec/reports/merge_arrayvec.json
 ```
 
 Useful options:
