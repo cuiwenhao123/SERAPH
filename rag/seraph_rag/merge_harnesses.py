@@ -235,8 +235,6 @@ def encode_selector(selector: int) -> bytes:
 
 def write_selector_safe_corpus(corpus_dir: Path, selected_cases: List[Path]) -> List[Path]:
     corpus_dir.mkdir(parents=True, exist_ok=True)
-    for existing_seed in corpus_dir.glob("selector_*.bin"):
-        existing_seed.unlink()
     seed_files = []
     for selector, _case_path in enumerate(selected_cases):
         seed_path = corpus_dir / "selector_{:04d}.bin".format(selector)
