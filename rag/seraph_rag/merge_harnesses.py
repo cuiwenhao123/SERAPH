@@ -8,6 +8,9 @@ from typing import Dict, List, Tuple, Union
 from seraph_rag.smoke_run import collect_successful_harnesses
 
 
+_SELECTOR_SAFE_SEED_LIMIT = 65536
+
+
 def write_merged_harnesses(
     workspace_dir: Union[str, Path],
     round_no: int,
@@ -27,6 +30,8 @@ def write_merged_harnesses(
     )
     if not selected_cases:
         raise ValueError("no passing harness cases available for merge")
+    if len(selected_cases) > _SELECTOR_SAFE_SEED_LIMIT:
+        raise ValueError("selector-safe seed limit exceeded: more than 65536 selected cases")
 
     crate_dir_name = _sanitize_name(crate_name)
     target_name = "merged_{}".format(crate_dir_name)
@@ -35,6 +40,8 @@ def write_merged_harnesses(
     project_dir = workspace / "_cargo_projects" / target_name
     project_src_dir = project_dir / "src"
     project_cases_dir = project_src_dir / "cases"
+    default_corpus_dir = workspace / "afl" / target_name / "corpus"
+    default_corpus_meta_dir = workspace / "afl" / target_name / "corpus_meta"
 
     merged_cases_dir.mkdir(parents=True, exist_ok=True)
     project_cases_dir.mkdir(parents=True, exist_ok=True)
@@ -61,9 +68,10 @@ def write_merged_harnesses(
         render_merged_manifest(target_name, crate_name, crate_import_name, workspace),
         encoding="utf-8",
     )
+    default_seed_files = write_selector_safe_corpus(default_corpus_dir, selected_cases)
 
     report = {
-        "version": "seraph.phase3.merge_harnesses.v1",
+        "version": "seraph.phase3.merge_harnesses.v2",
         "round": round_no,
         "crate_name": crate_name,
         "crate_import_name": crate_import_name,
@@ -74,11 +82,27 @@ def write_merged_harnesses(
         "main_rs": str(merged_dir / "main.rs"),
         "registry_rs": str(merged_dir / "registry.rs"),
         "selected_cases_file": str(merged_dir / "selected_cases.txt"),
+        "selected_case_count": len(selected_cases),
+        "safe_seed_count": len(default_seed_files),
+        "default_corpus_dir": str(default_corpus_dir),
+        "default_corpus_meta_dir": str(default_corpus_meta_dir),
+        "default_seed_files": [str(path) for path in default_seed_files],
         "selected_cases": [str(path) for path in selected_cases],
         "excluded_cases": excluded_cases,
     }
     report_path = reports_dir / "merge_{}.json".format(crate_dir_name)
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_selector_safe_corpus_summary(
+        summary_path=default_corpus_meta_dir / "summary.json",
+        target_name=target_name,
+        manifest_path=project_dir / "Cargo.toml",
+        merge_report_path=report_path,
+        corpus_dir=default_corpus_dir,
+        meta_dir=default_corpus_meta_dir,
+        selected_case_count=len(selected_cases),
+        safe_seed_count=len(default_seed_files),
+        seed_files=default_seed_files,
+    )
     report["report_path"] = str(report_path)
     return report
 
@@ -203,6 +227,49 @@ def render_merged_manifest(
         f'{crate_import_name} = {{ package = "{crate_name}", path = "{crate_config["crate_dir"]}" }}\n'
         'afl = { version = "0.15", optional = true }\n'
     )
+
+
+def encode_selector(selector: int) -> bytes:
+    return selector.to_bytes(2, byteorder="big", signed=False)
+
+
+def write_selector_safe_corpus(corpus_dir: Path, selected_cases: List[Path]) -> List[Path]:
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+    for existing_seed in corpus_dir.glob("selector_*.bin"):
+        existing_seed.unlink()
+    seed_files = []
+    for selector, _case_path in enumerate(selected_cases):
+        seed_path = corpus_dir / "selector_{:04d}.bin".format(selector)
+        seed_path.write_bytes(encode_selector(selector))
+        seed_files.append(seed_path)
+    return seed_files
+
+
+def write_selector_safe_corpus_summary(
+    summary_path: Path,
+    target_name: str,
+    manifest_path: Path,
+    merge_report_path: Path,
+    corpus_dir: Path,
+    meta_dir: Path,
+    selected_case_count: int,
+    safe_seed_count: int,
+    seed_files: List[Path],
+) -> None:
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    summary = {
+        "version": "seraph.phase3.selector_safe_corpus.v1",
+        "target_name": target_name,
+        "manifest_path": str(manifest_path),
+        "merge_report": str(merge_report_path),
+        "corpus_dir": str(corpus_dir),
+        "meta_dir": str(meta_dir),
+        "selected_case_count": selected_case_count,
+        "safe_seed_count": safe_seed_count,
+        "crash_seed_count": 0,
+        "seed_files": [str(path) for path in seed_files],
+    }
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _sanitize_name(value: str) -> str:
