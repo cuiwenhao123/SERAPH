@@ -94,7 +94,7 @@ Phase 2 target selection rules:
 
 The active `aflpp` style asks the model for `pub fn run_case(input: &[u8])` case modules, not final binaries. SERAPH wraps those cases in one-shot executables for compile/smoke screening, then merges passing cases into a crate-level AFL++ target with a tool-generated `afl::fuzz!` entrypoint.
 
-For smoke-successful Phase 3 workspaces, `phase3 merge-harnesses` selects the passing cases and synthesizes a merged Cargo target. `phase3 afl-bootstrap` then forwards that merged target to `scripts/bootstrap-fuzz-target.sh`, which builds regular, ASan, and CmpLog variants and renders or launches the paired AFL++ campaign.
+For smoke-successful Phase 3 workspaces, `phase3 merge-harnesses` selects the passing cases, synthesizes a merged Cargo target, and writes selector-safe default seeds under `workspace/afl/<target_name>/corpus`. `phase3 afl-bootstrap` then forwards that merged target to `scripts/bootstrap-fuzz-target.sh`, which consumes the merge report's `default_corpus_dir` automatically, builds regular, ASan, and CmpLog variants, and renders or launches the paired AFL++ campaign. Passing `--afl-corpus-dir` still overrides that default when you want a manual corpus path.
 
 When Phase 3 compile, smoke, or fix steps run, `seraph-cli run` also writes `workspace/coverage.json`.
 

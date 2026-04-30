@@ -21,6 +21,13 @@ Available helper entrypoints:
 - a generated harness under `fuzz/`
 - `cargo afl` and `afl-fuzz` available on `PATH` (or overridden with `SERAPH_CARGO_AFL_COMMAND` / `SERAPH_AFL_FUZZ_COMMAND`)
 
+Merged-harness AFL++ flow:
+
+- `phase3 merge-harnesses` now generates a selector-safe default corpus under `workspace/afl/<target_name>/corpus`
+- `scripts/bootstrap-fuzz-target.sh` uses that merge-generated corpus automatically when the merge report includes `default_corpus_dir`
+- `--corpus-dir` still overrides the merge-generated default when you need a manual corpus
+- the zeroed fallback `seed.bin` is now only a fallback for empty corpora, including manually supplied corpus directories and older merge reports that do not provide `default_corpus_dir`
+
 Example:
 
 ```bash
