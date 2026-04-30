@@ -25,6 +25,10 @@ fn temp_dir(name: &str) -> PathBuf {
     path
 }
 
+fn temp_dir_with_spaces(name: &str) -> PathBuf {
+    temp_dir(&format!("{name} spaced path"))
+}
+
 enum DefaultCorpusDirField<'a> {
     Missing,
     Null,
@@ -299,4 +303,42 @@ fn bootstrap_fuzz_target_dry_run_falls_back_when_merge_default_corpus_dir_is_nul
     let stdout = String::from_utf8(output.stdout).expect("stdout utf8");
     assert!(stdout.contains(legacy_corpus.to_str().expect("legacy corpus str")));
     assert!(!stdout.contains(" -i None "));
+}
+
+#[test]
+fn bootstrap_fuzz_target_dry_run_handles_merge_report_paths_with_spaces() {
+    let repo = repo_root();
+    let workspace = temp_dir_with_spaces("bootstrap-afl-spaces");
+    let selector_safe_corpus = workspace.join("afl/merged_fixture/selector safe corpus");
+    let merge_report = write_minimal_workspace(
+        &workspace,
+        DefaultCorpusDirField::Present(&selector_safe_corpus),
+    );
+    let manifest_path = workspace.join("_cargo_projects/merged_fixture/Cargo.toml");
+
+    let output = Command::new("bash")
+        .current_dir(&repo)
+        .args([
+            "scripts/bootstrap-fuzz-target.sh",
+            "--workspace-dir",
+            workspace.to_str().expect("workspace str"),
+            "--merge-report",
+            merge_report.to_str().expect("merge report str"),
+            "--dry-run",
+        ])
+        .output()
+        .expect("run bootstrap script");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf8");
+    assert!(stdout.contains(manifest_path.to_str().expect("manifest str")));
+    let escaped_selector_safe_corpus = selector_safe_corpus
+        .to_str()
+        .expect("selector-safe corpus str")
+        .replace(' ', "\\ ");
+    assert!(stdout.contains(&escaped_selector_safe_corpus));
 }

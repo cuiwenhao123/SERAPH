@@ -144,19 +144,22 @@ fi
 [[ -f "$merge_report_path" ]] || fail "merge report not found: $merge_report_path"
 merge_report_path="$(cd "$(dirname "$merge_report_path")" && pwd)/$(basename "$merge_report_path")"
 
-read -r manifest_path target_name default_corpus_dir_from_report < <(
+mapfile -d '' -t merge_report_fields < <(
   python3 - "$merge_report_path" <<'PY'
 import json
 import sys
 payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
 default_corpus_dir = payload.get("default_corpus_dir") or ""
-print(
-    payload["manifest_path"],
-    payload["target_name"],
-    default_corpus_dir,
-)
+for value in (payload["manifest_path"], payload["target_name"], default_corpus_dir):
+    sys.stdout.buffer.write(value.encode("utf-8"))
+    sys.stdout.buffer.write(b"\0")
 PY
 )
+
+(( ${#merge_report_fields[@]} == 3 )) || fail "merge report parsing produced unexpected field count"
+manifest_path="${merge_report_fields[0]}"
+target_name="${merge_report_fields[1]}"
+default_corpus_dir_from_report="${merge_report_fields[2]}"
 
 [[ -n "$manifest_path" ]] || fail "merge report missing manifest_path"
 [[ -n "$target_name" ]] || fail "merge report missing target_name"
