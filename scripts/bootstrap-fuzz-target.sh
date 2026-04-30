@@ -149,10 +149,11 @@ read -r manifest_path target_name default_corpus_dir_from_report < <(
 import json
 import sys
 payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
+default_corpus_dir = payload.get("default_corpus_dir") or ""
 print(
     payload["manifest_path"],
     payload["target_name"],
-    payload.get("default_corpus_dir", ""),
+    default_corpus_dir,
 )
 PY
 )
