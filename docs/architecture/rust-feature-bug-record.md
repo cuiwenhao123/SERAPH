@@ -156,6 +156,84 @@
     - 同时也观察到第二个变体不再出现旧的空切片 panic
     - 但这次 rerun 还同时切换到了真实 embedding backend，因此不应把 runtime 改善单独过度归因给某一个因素
 
+### 1.7 crate root 文档里的默认泛型事实没有进入 context：`sized_chunks::SparseChunk`
+
+- **crate / 阶段**：`sized-chunks-0.6.2`，Phase 2 检索 / Phase 3 真实 crate 验证
+- **现象**：
+  - 旧上下文只给出 `SparseChunk<A, N>` 的 generic bound 与 type-level trait 约束
+  - 没有把 crate root 文档里的关键事实“可以省略 size，默认是 64”带进 context
+  - 结果首轮 harness 与 fix-loop 连续猜出了私有或不存在的 `U64` 路径，例如：
+    - `typenum::U64`
+    - `sized_chunk::U64`
+    - `sized_chunks::types::U64`
+- **Rust 特性**：
+  - Rust crate 常把“默认泛型参数如何诚实书写”记录在 crate root / module docs，而不是只写在 type docs 或 constructor signature 里
+  - 对这类 type-level numerics crate，是否显式写第二个泛型参数，直接决定 harness 会不会落到私有 typenum / re-export 幻觉
+- **根因**：
+  - 旧检索逻辑主要 surface type-level owner facts、examples 与 setup API
+  - 但没有系统提炼 crate root / module docs 中与 owner 直接相关的“默认写法事实”
+  - `SparseChunk` 的 type example 反而更强调 `U20` 这类显式 typenum 写法，进一步把模型往“必须写 `U*`”方向推
+- **工具修复**：
+  - 在 context 的 `Compile-Time Facts` 中新增 `Owner Documentation Facts`
+  - 从 crate root docs、owner anchor module docs、owner type docs 中提炼与 owner 直接相关的高价值文档事实
+  - 对长句做 Rust-oriented 压缩，避免 budget 截断后丢失关键部分
+  - 在 `Variant Opportunities / Setup Choices` 中同步暴露这类 owner 文档事实，但不强迫 LLM 按固定 setup chain 构造
+- **能力提升**：
+  - 模型可以直接看到：`omit the size; SparseChunk<A> defaults to size 64`
+  - 这显著降低了为满足 type-level bound 而臆造私有 typenum 路径的概率
+  - 对 Rust 里“默认泛型参数靠文档而不是 signature 解释”的 crate 更稳健
+- **真实验证**：
+  - 旧 attempted workspace：`/tmp/seraph-deepsurf-round1-latest-20260429/sized-chunks-0.6.2`
+  - 新 rerun workspace：`/tmp/seraph-sized-chunks-rerun-20260429-contextfix`
+  - 新 context 明确包含：
+    - `Owner Documentation Facts: omit the size; SparseChunk<A> defaults to size 64`
+  - 新 harness 采用了诚实 owner 形状：
+    - `let chunk: SparseChunk<u8> = SparseChunk::pair(idx1, val1, idx2, val2);`
+  - compile：`1 / 1 ok`
+  - smoke：`1 / 1 ok`
+  - coverage：`Validated`
+
+### 1.8 owner-bridge 被过度“祝福”为主 setup 锚点，压过了 direct `From` 构造桥：`stack::ArrayVec::into_inner`
+
+- **crate / 阶段**：`stack-0.3.0`，Phase 2 检索 / Phase 3 真实 crate 验证
+- **现象**：
+  - 旧 context 把 `stack::SmallVec::into_inner` 放进 `Known Reachable Paths`
+  - 但没有把 `impl From<T> for ArrayVec<T>` 作为显式 owner 构造桥 surface 出来
+  - 因此模型容易走“先造 `SmallVec`，再 `into_inner`”这条路径，最终卡在 `Coalesce2<ArrayVec<T>, S>` 之类 wrapper shape 上
+- **Rust 特性**：
+  - Rust 常把最自然的 owner 构造方式编码成 trait-based conversion，例如 `impl From<T> for Owner<T>`
+  - 同时又存在大量 borrowed / wrapper / spill 风格 owner-bridge API
+  - 二者都可能“语义上能接近 target owner”，但 compile surface 完全不同
+- **根因**：
+  - 旧检索逻辑会把 owner-bridge API 视为高价值 reachable setup
+  - 但没有区分“direct public owner conversion”与“wrapper-producing bridge”
+  - 因而 `Known Reachable Paths` 过度强化了 `SmallVec::into_inner`
+- **工具修复**：
+  - 在 `Compile-Time Facts` 中新增 `Owner Construction Bridges`
+  - 从 `trait_impl_registry` 中提取 public conversion bridge，例如：
+    - `stack::ArrayVec::from(...) via impl core::convert::From<T> for stack::ArrayVec<T>`
+  - 如果 target owner 已有 direct public conversion bridge，则把 `basis=owner_bridge` 的 setup 项从 `Known Reachable Paths` 中降级，不再把它作为 blessed anchor
+  - `Variant Opportunities / Setup Choices` 则优先呈现 direct conversion bridge
+- **能力提升**：
+  - 模型不再被“能到 owner，但会先变成 wrapper/enum”的 bridge API 误导
+  - 对 Rust 中大量 `From` / `TryFrom` / conversion-style owner setup 更敏感
+  - 这使 harness 更容易落到最小、最直接、最 compile-honest 的 owner shape
+- **真实验证**：
+  - 旧 attempted workspace：`/tmp/seraph-deepsurf-round1-latest-20260429/stack-0.3.0`
+  - 中间 rerun（只加了 construction bridge，但还没降级 owner-bridge）：`/tmp/seraph-stack-rerun-20260429-contextfix`
+    - harness 已经学会 `ArrayVec::from(backing)`
+    - 但仍被 `SmallVec::into_inner` 误导，最后把 `Coalesce2<...>` 当成 `ArrayVec`
+    - compile 失败，coverage 仍为 `Attempted`
+  - 最终 rerun（加入 owner-bridge 降级规则）：`/tmp/seraph-stack-rerun-20260429-contextfix2`
+    - `Known Reachable Paths` 为空，不再把 `SmallVec::into_inner` 祝福成主 setup 锚点
+    - `Setup Choices` 首先暴露 `stack::ArrayVec::from(...)`
+    - 新 harness 直接生成：
+      - `let array_vec: ArrayVec<[u8; 16]> = ArrayVec::from(backing);`
+      - `let _result = array_vec.into_inner();`
+    - compile：`1 / 1 ok`
+    - smoke：`1 / 1 ok`
+    - coverage：`Validated`
+
 ## 2. Phase 3 中暴露的 Rust 专有编译问题
 
 ### 2.1 模块路径 / re-export 幻觉：`Dictionary` 不在 crate root
@@ -950,6 +1028,484 @@
   - 剩余少量失败主要落在首轮生成细节，而不是 Phase 2 reachability / constructibility 的结构性缺口
 
 ## 9. 2026-04-26 `snap7-rs` 真实 crate representative top-10 batch
+
+## 10. 2026-04-29 deepSURF round-1 定点 rerun：首轮 prompt/context 修复验证
+
+这轮不是重新跑完整个 deepSURF round-1 batch，
+而是针对旧 `attempted` 中最能代表当前缺陷面的 4 个 crate 做 latest-state 定点 rerun：
+
+- `fixedbitset-0.4.1`
+- `smallvec-0.6.1`
+- `tokio-1.24.1`
+- `sized-chunks-0.6.2`
+
+它们分别覆盖：
+
+- case-module 包装 / runner path 契约问题
+- owner type 具体用法与 generic 事实不足
+- target leaf 与 semantic guard 名称冲突
+- Rust owner generic / precondition 仍未完全首轮收敛的残余难点
+
+### 10.1 `run_case` case-module 包装与 runner path 不一致，会制造大量假 `attempted`
+
+- **crate / 阶段**：
+  - 旧 round-1：`fixedbitset-0.4.1`、`smallvec-0.6.1`、`sized-chunks-0.6.2`、`tokio-1.24.1`
+  - Phase 3 compile
+- **现象**：
+  - LLM 常输出：
+    - `pub mod case_1 { pub fn run_case(...) { ... } }`
+  - 但 cargo wrapper 的 `main.rs` 一直硬编码：
+    - `case_impl::run_case(&data);`
+  - 结果即使 harness 主体逻辑基本正确，也会被错误地判成 compile failed。
+- **这不是 Rust 语义本身的问题，而是 SERAPH 的输出契约问题**：
+  - prompt 只说“定义 `run_case`”，没有明确禁止再包一层 module
+  - runner 又默认 `run_case` 一定在顶层
+- **旧证据**：
+  - `fixedbitset-0.4.1` 旧 harness：
+    - `/tmp/seraph-deepsurf-round1-20260428-2045/fixedbitset-0.4.1/fuzz/harness_001_01.rs`
+  - 旧 compile 失败：
+    - `/tmp/seraph-deepsurf-round1-20260428-2045/fixedbitset-0.4.1/reports/compile_001_01.json`
+    - 关键错误：
+      - `error[E0425]: cannot find function run_case in module case_impl`
+- **工具修复**：
+  - prompt 显式加入：
+    - 不要把 `run_case` 再包进额外 module
+  - runner 侧同时做兼容修复：
+    - 若 harness 仍是 `pub mod case_1 { ... run_case ... }`
+    - 自动改为调用 `case_impl::case_1::run_case`
+- **能力提升**：
+  - 这类“本质是假失败”的 attempted 不再淹没真实的 Rust compile / smoke 问题
+  - 模型质量与 runner 契约两侧都被补上，既减少新产生的 wrapper 输出，也兼容旧风格输出
+- **latest-state 定点 rerun 结果**：
+  - `fixedbitset-0.4.1`
+    - 旧：`attempted`
+    - 新：`validated`
+    - workspace：`/tmp/seraph-rerun-fixedbitset-0.4.1-20260429/fixedbitset-0.4.1`
+
+### 10.2 `Owner Type Facts` / `Owner Type Usage Hints`：Rust generic owner 不能只靠 related API 文本暗示
+
+- **crate / 阶段**：
+  - `smallvec-0.6.1`
+  - `sized-chunks-0.6.2`
+  - Phase 2 context / Phase 3 首轮 harness
+- **Rust 特性**：
+  - 很多 Rust owner 类型是否可实例化，
+    - 不只取决于“有哪些 related API”，
+    - 还取决于非常具体的 generic owner 形状：
+      - `SmallVec<[u8; 4]>`
+      - `SparseChunk<A, N>` 中 `N: Bits + ChunkLength<A>`
+  - 这些事实如果只散落在文档或 setup 文本里，
+    - LLM 很容易“语义懂了，但 Rust 写错了”。
+- **旧问题表现**：
+  - `smallvec-0.6.1` 旧 harness 虽然能猜到 `SmallVec<[u8; 8]>`，
+    - 但整体仍被 wrapper/path 假失败盖住，
+    - 看不出 owner 形状信息到底是否被模型稳定掌握。
+  - `sized-chunks-0.6.2` 旧 harness 直接写出：
+    - `SparseChunk<u8, 256>`
+  - 旧 compile 报：
+    - `E0747: constant provided when a type was expected`
+  - 旧证据：
+    - harness：
+      - `/tmp/seraph-deepsurf-round1-20260428-2045/sized-chunks-0.6.2/fuzz/harness_001_01.rs`
+    - compile report：
+      - `/tmp/seraph-deepsurf-round1-20260428-2045/sized-chunks-0.6.2/reports/compile_001_01.json`
+- **工具修复**：
+  - 在 context 中新增：
+    - `### Owner Type Facts`
+      - 明确列出 owner 的 `generic_params` 与 `where_clauses`
+    - `## Owner Type Usage Hints`
+      - 从 owner type 文档示例中抽取具体可用的 owner/setup 代码形状
+  - 同时做了保守过滤：
+    - 只暴露 public-nameable / 当前 context 中可诚实引用的示例
+    - 避免把像 `typenum::U20` 这类并未在 crate public surface 中稳定暴露的外部名字直接灌给模型
+- **latest-state 真实效果**：
+  - `smallvec-0.6.1` 新首轮 harness 直接使用：
+    - `let mut v = SmallVec::<[u8; 4]>::from_slice(seed);`
+  - 见：
+    - `/tmp/seraph-rerun-smallvec-0.6.1-20260429/smallvec-0.6.1/fuzz/harness_001_01.rs`
+  - 这说明 owner 文档里的具体形状已经真正进入了首轮生成产物，而不是只停留在知识库里。
+  - `sized-chunks-0.6.2` 新首轮 harness 虽然仍未完全一次收敛，
+    - 先猜成：
+      - `SparseChunk<u8, [u32; 1]>`
+    - 见：
+      - `/tmp/seraph-rerun-sized-chunks-0.6.2-20260429/sized-chunks-0.6.2/fuzz/harness_001_01.rs`
+    - 但 fix-loop 已能把它收敛到：
+      - `SparseChunk<u8>`
+    - 见：
+      - `/tmp/seraph-rerun-sized-chunks-0.6.2-20260429/sized-chunks-0.6.2/fuzz/harness_001_01_fixed_01.rs`
+- **能力提升**：
+  - `smallvec-0.6.1`
+    - 旧：`attempted`
+    - 新：`validated`
+  - `sized-chunks-0.6.2`
+    - 旧：`attempted`
+    - 新：至少已经越过“完全卡死在 const/type generic 幻觉”的阶段，
+      - compile：`failed -> ok`
+      - smoke：进入真实运行期诊断
+- **谨慎结论**：
+  - `Owner Type Facts / Usage Hints` 已明显改善了“首轮 owner 形状完全瞎猜”的问题
+  - 但对 `sized-chunks` 这类 type-level numerics / trait-bound-heavy owner，
+    - 还不能声称“首轮一定正确”
+  - 当前更准确的说法是：
+    - 它让模型更少依赖凭空猜测，
+    - 并让 compile-guided fix 更容易收敛到 honest owner 形状
+
+### 10.3 semantic guard 不能把真实 target `assume_init` 一并误杀
+
+- **crate / 阶段**：
+  - `tokio-1.24.1`
+  - target：
+    - `api::tokio::io::read_buf::ReadBuf::assume_init`
+  - Phase 3 compile-check
+- **Rust 特性**：
+  - `assume_init` 既可能是危险的初始化捷径，
+    - 也可能是 crate 真实公开的 unsafe target API 名称
+  - 也就是说：
+    - “方法名看起来危险” 与 “这是不是当前真实 target” 不是一回事。
+- **旧根因**：
+  - compile-check 只要看到源码里出现 `assume_init(`，
+    - 就直接按 fabrication trick 拒绝
+  - 因此即使 harness 实际已经 honest 地调用了 target，
+    - 也永远过不了 compile-check。
+- **旧证据**：
+  - 旧 rerun compile report：
+    - `/tmp/seraph-deepsurf-rerun-tokio-1.24.1-20260428/tokio-1.24.1/reports/compile_001_01.json`
+  - 关键错误：
+    - `SERAPH semantic guard: unsafe initialization trick 'assume_init(' can fabricate missing target state`
+- **工具修复**：
+  - semantic guard 改成：
+    - 只有当 `assume_init(` 不是当前 target marker 窗口里的真实 target call 时才拦截
+    - 如果 target 本身就是 `...::assume_init`，则允许该调用通过
+  - 这样仍然保留了对通用 `MaybeUninit::assume_init` 伪造状态的防护，
+    - 但不再误杀真实 target。
+- **latest-state 真实效果**：
+  - 新 harness：
+    - `/tmp/seraph-rerun-tokio-1.24.1-20260429/tokio-1.24.1/fuzz/harness_001_01.rs`
+  - 新结果：
+    - `tokio-1.24.1`
+      - 旧：`attempted`
+      - 新：`validated`
+- **能力提升**：
+  - SERAPH 不再因为“防 hallucination / 防 fabrication 的 guard 过于粗暴”，
+    - 反过来屏蔽掉真实 unsafe target 的 reachability
+
+### 10.4 这轮定点 rerun 的最重要实验结论
+
+- **从旧 `attempted` 到 latest-state rerun 的变化**：
+  - `fixedbitset-0.4.1`：
+    - `attempted -> validated`
+  - `smallvec-0.6.1`：
+    - `attempted -> validated`
+  - `tokio-1.24.1`：
+    - `attempted -> validated`
+  - `sized-chunks-0.6.2`：
+    - 聚合结果是 `bug`
+    - 但 runtime diagnosis 实际给出：
+      - `classification = invalid_input_or_precondition`
+      - `bug = false`
+    - 即：
+      - 这是 harness-side precondition panic，
+      - 不是已经确认的 target bug
+    - 相关证据：
+      - `/tmp/seraph-rerun-sized-chunks-0.6.2-20260429/sized-chunks-0.6.2/reports/runtime_error_001_01_fixed_01.json`
+- **因此这轮最新结论应写得非常精确**：
+  - prompt / context / runner / semantic-guard 这几个修复，
+    - 已经把 3 个代表性 `attempted` case 真正推进到了 `validated`
+  - `sized-chunks-0.6.2` 进一步暴露出的，不再是 compile-level 卡死，
+    - 而是更细粒度的 harness precondition 保守性问题
+  - 这正说明：
+    - 当前 latest-state SERAPH 的瓶颈，已经从“根本过不去”开始向“能运行后如何更稳定地区分 harness bug 与 target bug”转移
+
+### 10.5 扩展 rerun：wrapper/path 假失败继续大幅收缩
+
+在 10.1 到 10.4 的第一轮定点 rerun 之后，又继续对一批旧 `attempted` 做了 latest-state 扩展 rerun：
+
+- `smallvec-0.6.3`
+- `itoa-1.0.6`
+- `arc-swap-1.0.0`
+- `base64-0.5.1`
+- `futures-0.3.5-futures-task`
+- `cbox-0.3.0`
+- `arenavec-0.1.1`
+- `stack-0.3.0`
+- `stack_dst-0.6.0`
+- `slice-deque-0.3.0`
+- `slice-deque-0.1.15`
+- `scratchpad-1.3.0`
+
+**这轮新增的直接转化结果：**
+
+- `smallvec-0.6.3`: `attempted -> validated`
+- `itoa-1.0.6`: `attempted -> validated`
+- `arc-swap-1.0.0`: `attempted -> validated`
+- `base64-0.5.1`: `attempted -> validated`
+- `futures-0.3.5-futures-task`: `attempted -> validated`
+
+这 5 个样本加上 10.4 里的 3 个 validated 转化，意味着：
+
+- 旧 `attempted` 中，已经至少有 **8 个** 被 latest-state rerun 清成了 `validated`
+
+其中很重要的一点是：
+
+- `itoa-1.0.6`
+  - 旧失败基本纯粹是 `mod case_0` 包装后 `case_impl::run_case` 路径不匹配
+  - latest-state rerun 直接过为 `validated`
+- `smallvec-0.6.3`
+  - 旧 harness 实际也带了 module wrapper：
+    - `pub mod case_0 { ... run_case ... }`
+  - latest-state rerun 同样转为 `validated`
+- `arc-swap-1.0.0`、`base64-0.5.1`、`futures-0.3.5-futures-task`
+  - 都不是“只靠首轮就完美”；
+  - 它们在 latest-state rerun 中仍然经历了：
+    - `compile failed -> fix-loop ok -> smoke ok`
+  - 但 wrapper/path 假失败被清掉之后，fix-loop 才真正有机会处理剩余的具体 Rust 约束
+
+**论文意义：**
+
+- 这进一步支持 10.1 的结论：
+  - `run_case` 输出契约和 runner 调用路径不一致，
+    - 会把大量本可收敛的 case 错误地堆进 `attempted`
+  - 一旦把这类假失败剥离掉，
+    - 最新系统状态下的真实 residual 面会明显缩小
+
+### 10.6 扩展 rerun 后暴露出的 3 类 residual 面
+
+经过这轮继续清理后，当前 residual 面已经更清楚地分成三类。
+
+#### 10.6.1 compile-critical generic bound / public implementor facts 仍不足：`cbox`、`arenavec`
+
+- **`cbox-0.3.0`**
+  - 新 context 已经能给出：
+    - `Owner Type Facts`
+      - `cbox::CBox: generic_params=D; where_clauses=D: DisposeRef + ?Sized`
+  - 但 latest-state rerun 仍停在 `attempted`
+  - 过程是：
+    - 初始 compile：
+      - `E0282 type annotations needed`
+    - fix-loop 第 1 轮把 owner concretize 成：
+      - `CBox<u8>`
+    - 随后 compile 直接暴露出更真实的问题：
+      - `u8: DisposeRef` 不成立
+  - 这说明：
+    - 仅仅暴露 “owner 有一个 trait bound” 还不够
+    - context 还需要进一步提供：
+      - 该 trait 的 public implementor / honest concrete owner 候选
+      - 否则模型只能盲猜 `u8` 这类 compile-invalid concretization
+
+- **`arenavec-0.1.1`**
+  - 新 context 已经能给出：
+    - owner 是 `arenavec::SliceVec`
+    - setup API 是 `SliceVec::new` / `SliceVec::with_capacity`
+  - 但最新 rerun 仍停在 `attempted`
+  - 过程是：
+    - 初始 compile：
+      - 把 `Vec<u8>` 错当成 `AllocHandle`
+    - fix-loop 已经意识到需要 `Arena` 风格 handle，
+      - 并尝试写出 `Arena::new().handle()`
+    - 但又因为 context 没把 public import path 充分抬出来，
+      - 生成了 `use arenavec::{Arena, SliceVec};`
+      - 结果 compile 报：
+        - `no Arena in the root`
+  - 从 `knowledge.json` 可见，
+    - 真正的 public implementor 路径是：
+      - `arenavec::region::Arena`
+      - `arenavec::region::ArenaHandle`
+      - `arenavec::region::ArenaToken`
+      - 以及 `arenavec::rc::*` 分支
+  - 这说明当前缺的不是“模型完全不知道需要 handle”，
+    - 而是 compile-critical implementor / path facts 还没有在 context 中被结构化 surfaced。
+
+**能力边界含义：**
+
+- `Owner Type Facts` 已经足以处理一部分 generic owner
+- 但对 “generic owner + trait-bound concretization + public implementor path” 这一层，
+  - 还需要进一步把 trait implementor facts 纳入 context schema
+
+#### 10.6.1.1 后续修复：trait implementor facts + owner-specialization alias bridge + context-aware raw-pointer bridge
+
+- **修复 1：把 `where_clauses` 里的 trait bound 提升成显式 compile facts**
+  - retrieve 现在不再只看：
+    - `owner_trait_id`
+    - `api_accepts_trait`
+  - 还会把：
+    - API `where_clauses`
+    - owner type `where_clauses`
+    - 中出现的 trait
+    - 收进 `relevant_trait_ids`
+  - context 新增：
+    - `Trait Implementor Facts`
+  - 作用：
+    - 把 “这个 generic owner 需要什么 trait”
+    - 以及 “有哪些 public implementor 可以 honest concretize”
+    - 明确告诉模型，而不是让它盲猜 `u8` / `Vec<u8>`。
+
+- **修复 2：把 public type alias specialization 反推回 owner-family setup chain**
+  - Rust 里很多库不会把关键 bound 直接写在 API 自身上，
+    - 而是藏在：
+      - impl block
+      - 或 public type alias specialization
+  - `arenavec` 就是典型例子：
+    - `arenavec::region::SliceVec<'a, T>`
+      - 实际是
+      - `common::SliceVec<T, ArenaHandle<'a>>`
+  - 之前 SERAPH 只知道：
+    - `SliceVec::new(H)`
+    - `SliceVec::with_capacity(H, usize)`
+    - 却不知道 `H` 可以从哪条 public family 走出来
+  - 现在 retrieve 会：
+    - 读取 public `type_alias` 的目标表达式
+    - 如果它把 target owner 特化到了具体 public type
+    - 就把这些具体 type 重新作为 seed type 加回 setup 搜索
+  - 结果是 `Known Reachable Paths` 里能真实长出：
+    - `arenavec::rc::Arena::init_capacity`
+    - `arenavec::rc::Arena::inner`
+    - `arenavec::region::Arena::generation_token`
+    - `arenavec::region::ArenaToken::weak`
+  - 这是一类非常 Rust-specific 的 retrieval 设计：
+    - generic owner 的可达 concretization
+    - 不一定来自 API signature
+    - 可能来自 public alias family。
+
+- **修复 3：compile-check 不再对 context-backed raw-pointer owner bridge 一刀切误杀**
+  - 之前 semantic guard 会无差别拒绝：
+    - `Box::into_raw(`
+  - 这对大多数“伪造状态” case 是对的，
+    - 但对 `cbox` 这类 public setup 本来就要求 `*mut T` 的 owner constructor，
+    - 会把 honest bridge 也误杀掉
+  - 现在的放行条件是收窄后的：
+    - 只有当对应 round 的 context 里
+      - `Known Reachable Paths`
+      - 明确存在 public raw-pointer setup API
+    - 且 harness 也真的调用了那条 setup API
+    - 才允许 `Box::into_raw` 通过 semantic guard
+  - 因而：
+    - `Box::into_raw` 不再是 blanket allow
+    - 而是 “有 context 证据支撑的 raw-pointer owner bridge” 才放行。
+
+- **真实 crate 复验结果（2026-04-29 手工 round 901）**
+  - `arenavec-0.1.1`
+    - 新首轮 harness 已经直接使用：
+      - `arenavec::rc::Arena::init_capacity`
+      - `arena.inner()`
+      - `SliceVec::with_capacity(...)`
+    - 不再出现：
+      - 把 `Vec<u8>` 当 `AllocHandle`
+      - 或幻觉 `ArenaHandle::new()`
+    - 结果：
+      - `compile_901_index.json = ok`
+      - `smoke_901_index.json = ok`
+  - `cbox-0.3.0`
+    - 新首轮 harness 不再把 owner concretize 成 `u8`
+    - 而是写出一个最小 `DisposeRef` owner bridge，
+      - 再通过 `CBox::new(*mut D::RefTo)` 进入真实 public setup
+    - 在 compile-check 放行 context-backed raw-pointer bridge 后，
+      - `compile_901_index.json = ok`
+      - `smoke_901_index.json = ok`
+
+- **论文里可以怎么表述这类贡献**
+  - `arenavec` 展示的是：
+    - Rust public alias family 能编码 generic owner 的真实 concretization 线索，
+    - 仅靠 API signature / owner facts 不足以恢复 setup chain
+  - `cbox` 展示的是：
+    - Rust raw-pointer owner constructors 不能被简单视为 “unsafe fabrication”
+    - semantic guard 也必须读取 context，区分：
+      - fabricated fake state
+      - 和 public setup required owner bridge
+  - 这两条修复共同说明：
+    - Rust-specific harness synthesis 不是无边界地堆规则，
+    - 而是沿着几类高价值语义面补充事实桥梁：
+      - trait-bound concretization facts
+      - alias-specialized owner families
+      - context-aware raw-pointer setup bridges
+    - 每补上一类语义桥，
+      - 就能把一批真实 residual crate 从 `attempted` 拉回到可编译、可执行。
+
+#### 10.6.2 一部分 `attempted` 其实是 crate/toolchain compile breakage，不是 harness synthesis 失败
+
+扩展 rerun 中，以下样本都稳定复现为：
+
+- `slice-deque-0.3.0`
+- `slice-deque-0.1.15`
+- `scratchpad-1.3.0`
+
+共同特征是：
+
+- harness 一开始就还没真正成为主问题
+- compile 直接失败在 crate 自己的库代码上
+- 错误都与当前稳定工具链下的：
+  - `dangerous_implicit_autorefs`
+  - raw pointer deref / autoref
+  - aliasing validity 约束
+  - 相关
+
+例如：
+
+- `slice-deque-0.3.0`
+  - latest-state rerun 结果仍是：
+    - `attempted`
+  - 但 compile error 是：
+    - `implicit autoref creates a reference to the dereference of a raw pointer`
+  - fix-loop 两轮都无能为力，
+    - 因为错误发生在 crate 自身 `lib.rs`
+
+- `slice-deque-0.1.15`
+  - 情况同上
+  - 错误位置同样在 crate `lib.rs`
+
+- `scratchpad-1.3.0`
+  - 更极端：
+    - crate 自身在稳定工具链上直接爆出大量同类错误
+    - 一次 compile 中出现了几十处 raw-pointer autoref 相关报错
+
+**论文意义：**
+
+- 这类 case 不应该简单记成 “SERAPH prompt/context 质量差”
+- 更准确的分类应是：
+  - crate 在 current stable toolchain 上就无法通过依赖编译
+  - 因而 SERAPH 的 compile/fix-loop 没有机会真正验证 harness 质量
+- 这对实验报告非常重要：
+  - 否则会把 toolchain/crate incompatibility 错记为生成系统失败
+
+#### 10.6.3 embedding / indexing infra 仍会污染部分 rerun：`stack`、`stack_dst`、`http`
+
+- **`stack-0.3.0`**
+  - latest-state rerun 结果：
+    - `index_failed`
+  - 根因不是 harness，
+    - 而是 Phase 2 index 过程中 embedding 请求再次出现：
+      - `URLError: EOF occurred in violation of protocol`
+
+- **`stack_dst-0.6.0`**
+  - latest-state rerun 结果：
+    - `phase3_run_failed`
+  - 从日志看不是 crate compile 本身先失败，
+    - 而是 `seraph-cli run` 进入 Phase 3 后，
+      - 内部再次触发 `python3 -m seraph_rag.cli index`
+      - 然后又被同类 embedding SSL EOF 打断
+
+- **`http-0.1.19`**
+  - latest-state rerun 已稳定跑完：
+    - extract
+    - graph
+    - index
+    - targets
+  - 并进入了：
+    - `seraph-cli run --target-api-id api::http::header::name::HeaderName::from_bytes`
+  - 但在本轮观测窗口内，
+    - 它一直停在 phase3 run 的内部 `python3 -m seraph_rag.cli index` 子过程上，
+    - 没有及时落出最终结果文件
+  - 这再次说明：
+    - Phase 3 内部重复走 embedding/indexing 的稳定性，仍然会污染真实 rerun 统计
+
+**结论：**
+
+- 当前 latest-state 的 residual 面里，
+  - 已经不能再把所有 `attempted` 一概解释为 prompt/context 问题
+- 至少应拆成：
+  - 已被清掉的 wrapper/path 假失败
+  - compile-critical generic/trait concretization 缺口
+  - crate/toolchain 自身 compile breakage
+  - embedding / indexing infra 波动
 
 - **workspace**：`/tmp/seraph-snap7rs-top10-openai-20260426-183112`
 - **输入配置**：
@@ -2452,3 +3008,455 @@
   - 当 trait implementor metadata 在 extract / graph 里不完整时，
     - 把 target examples 直接升格为 context schema 的一级 section，
     - 能比继续堆 prompt 规则更稳定地收敛首轮 harness 质量。
+
+### 9.19 deepSURF Rust `64` 个 work unit 的 full-batch latest-state replay，说明必须把“历史瞬时失败”与“当前真实缺口”分开统计
+
+- **结果产物**：
+  - 主结果文件：
+    - [docs/research/deepsurf-round1-results.json](/home/cas/Desktop/SERAPH/docs/research/deepsurf-round1-results.json)
+    - [docs/research/deepsurf-round1-results.csv](/home/cas/Desktop/SERAPH/docs/research/deepsurf-round1-results.csv)
+    - [docs/research/deepsurf-round1-results.md](/home/cas/Desktop/SERAPH/docs/research/deepsurf-round1-results.md)
+  - 主 batch workspace：
+    - `/tmp/seraph-deepsurf-round1-20260428-2045`
+  - latest-state 定点 rerun workspace：
+    - `/tmp/seraph-deepsurf-rerun-slice-deque-0.3.0-20260428`
+    - `/tmp/seraph-deepsurf-rerun-tokio-1.24.1-20260428`
+- **latest-state 聚合结果**：
+  - `validated`: `23`
+  - `bug`: `1`
+  - `attempted`: `19`
+  - `no_targets`: `14`
+  - `extract_failed`: `6`
+  - `index_failed`: `1`
+- **为什么必须做 latest-state replay / rerun**：
+  - full batch 最早期的两条 `index_failed`
+    - `slice-deque-0.3.0`
+    - `tokio-1.24.1`
+  - 实际都发生在 embedding retry 补丁之前：
+    - `slice-deque-0.3.0` 是 `URLError` / SSL EOF
+    - `tokio-1.24.1` 是 embedding 服务 `HTTP 500`
+  - 在给 `embeddings.py` / `vector_index.py` 加上
+    - `IncompleteRead`
+    - `URLError`
+    - `HTTPError 429/5xx`
+    - 以及 batch upsert + `SERAPH_EMBEDDING_BATCH_SIZE=2`
+    - 之后，
+      - `slice-deque-0.3.0`：`index_failed -> attempted`
+      - `tokio-1.24.1`：`index_failed -> attempted`
+  - 因而如果论文直接引用未 rerun 的旧聚合数字，
+    - 会把“已经修掉的基础设施瞬时失败”
+    - 错算成当前工具能力边界。
+- **这轮 latest-state replay 里仍然真实存在的 Phase 1 / Phase 2 缺口**：
+  - `extract_failed = 6`
+  - 其中可以再分成两类：
+    - `rustdoc JSON` 解析兼容性：
+      - `secp256k1-0.22.0`
+      - `flatbuffers-0.8.0`
+      - `bincode-2.0.0-rc.3`
+      - `sparsey-0.7.0`
+      - 共同特征：
+        - `failed to parse rustdoc JSON: invalid type: map, expected a string`
+      - 这说明当前 extractor 对某些 rustdoc JSON 变体仍然有 schema 兼容缺口。
+    - `cargo rustdoc` / crate build 环境不兼容：
+      - `pnet_packet-0.26.0`
+        - build script panic，`thread caused non-unwinding panic`
+      - `chttp-0.1.2`
+        - `curl-sys` / `OpenSSL` / `libcurl.pc` 环境构建失败
+      - 这类不是 RAG 或 harness prompt 的问题，
+        - 而是“能否先把 knowledge 抽出来”的 Phase 1 环境前提问题。
+  - `index_failed = 1`
+    - 仅剩：
+      - `RUG::time`
+    - 其日志不是网络抖动，
+      - 而是 embedding 请求直接返回 `HTTP 400 Bad Request`
+    - 原始 full-batch 失败发生在大约 `305s`
+    - 额外诊断里，
+      - 把 `SERAPH_EMBEDDING_BATCH_SIZE` 降到 `1` 后，
+      - 同一份 `knowledge.json` 至少已经越过原失败时间点，
+      - 没有立刻复现相同的 `HTTP 400`
+    - 这说明：
+      - 在补齐 retry 之后，
+      - 还剩下一类“batch 形状 / 请求规模触发 embedding 网关拒绝”的索引稳健性问题，
+      - 不能再靠简单 retry 解决。
+- **这轮 replay 命中的真实库 bug**：
+  - `RUSTSAN::id-map-0.2.1`
+    - top target：
+      - `api::id_map::IdMap::into_iter`
+    - 结果：
+      - `outcome = bug`
+      - `compile = failed -> fix-loop ok`
+      - `smoke = bug`
+    - runtime diagnosis 已记录为：
+      - 在 `with_capacity + insert` 构造出的 map 状态上调用 `IdMap::into_iter`
+      - 触发 `slice::get_unchecked_mut` 越界前提被破坏
+      - 报告明确写出 “This indicates a bug in the program.”
+    - 这说明：
+      - 当前流水线已经不只是“能不能编译出 harness”，
+      - 而是真的能在 latest-state 大样本 replay 中抓到 crate 自身的运行期缺陷。
+- **`attempted = 19` 暴露出的 current Phase 3 非收敛面**：
+  - 这些 case 不是提取失败，也不是索引失败，
+    - 而是已经进入 top-1 target round-1，
+    - 但 `compile -> fix-loop -> smoke` 没在两轮内收敛。
+  - 当前最明显的几类表面模式是：
+    - `run_case` wrapper / module path 残差：
+      - `smallvec-0.6.1`
+      - `smallvec-0.6.3`
+      - `stack-0.3.0`
+      - `itoa-1.0.6`
+      - `fixedbitset-0.4.1`
+    - raw pointer / unsafe precondition 相关编译约束：
+      - `http-0.1.19`
+      - `slice-deque-0.3.0`
+      - `scratchpad-1.3.0`
+      - `slice-deque-0.1.15`
+      - 共同表面报错是：
+        - `implicit autoref creates a reference to the dereference of a raw pointer`
+    - 更 Rust-specific 的 target shape / generic / trait bound 问题：
+      - `futures-0.3.5-futures-task`：
+        - async block 不满足 `UnsafeFutureObj`
+      - `sized-chunks-0.6.2`：
+        - const generic 位置错误
+      - `arenavec-0.1.1`：
+        - owner / allocator trait bound 不满足
+      - `stack_dst-0.6.0`：
+        - unsized generic bound / constructor shape 不满足
+      - `cbox-0.3.0`、`arc-swap-1.0.0`、`base64-0.5.1`、`tokio-1.24.1`、`serde_json-1.0.96`、`leapfrog-0.2.1`
+        - 则更偏 type inference / API shape / setup shape 非收敛
+- **论文价值**：
+  - 这一轮大样本 replay 很适合把 Rust harness synthesis 的瓶颈拆成三层：
+    - Phase 1：
+      - rustdoc schema / cargo rustdoc 环境兼容性
+    - Phase 2：
+      - embedding / retrieval infra 的稳健性
+    - Phase 3：
+      - Rust-specific owner state、trait bound、const generic、raw pointer precondition 的 harness non-convergence
+  - 它还提供了一个非常重要的实验方法结论：
+    - 对这类端到端系统，
+      - 不能把“第一次 full batch”直接当最终数字，
+      - 而应把 replay 后已经修掉的基础设施失败剥离出去，
+      - 再统计 latest-state 结果。
+
+### 9.20 latest-state replay 继续暴露了一个新的 Phase 2 infra 鲁棒性缺口：embedding 客户端没有把 `RemoteDisconnected` 当作可重试错误
+
+- **现象**：
+  - 在 `/tmp/seraph-deepsurf-round1-latest-20260429` 这轮 full-batch replay 里，
+    - 首次聚合结果是：
+      - `validated = 31`
+      - `attempted = 7`
+      - `bug = 3`
+      - `no_targets = 11`
+      - `extract_failed = 6`
+      - `index_failed = 4`
+      - `phase3_run_failed = 2`
+  - 其中 6 个非语义失败都不是 crate 本身问题：
+    - `stack-0.3.0`
+    - `sys-info-0.7.0`
+    - `chrono-0.5.0-alpha.1`
+    - `hashes-blake2`
+    - `num-traits-0.2.15`
+    - `crc32fast-1.3.2`
+- **根因定位**：
+  - `stack` / `sys-info` 的 `phase3_round1.stderr.log` 直接显示：
+    - `http.client.RemoteDisconnected: Remote end closed connection without response`
+  - 后续定点 rerun 里，
+    - `num-traits` / `crc32fast` 还出现了
+      - `urllib.error.URLError: <urlopen error EOF occurred in violation of protocol>`
+  - 回看 [rag/seraph_rag/embeddings.py](/home/cas/Desktop/SERAPH/rag/seraph_rag/embeddings.py) 发现：
+    - embedder 已经有 `max_retries`
+    - 但 `_is_retryable_embedding_error(...)` 只覆盖了
+      - `IncompleteRead`
+      - `HTTPError 429/5xx`
+      - `URLError`
+    - 没有直接覆盖：
+      - `http.client.RemoteDisconnected`
+      - `ssl.SSLEOFError`
+  - 于是当兼容网关在 HTTPS/HTTP 层直接断开连接时，
+    - retry loop 会被绕过，
+    - full batch 结果被基础设施瞬时失败污染。
+- **修复**：
+  - 先加红测，再改实现：
+    - [rag/tests/test_embedding_openai_compatible.py](/home/cas/Desktop/SERAPH/rag/tests/test_embedding_openai_compatible.py)
+      - `test_openai_compatible_embedder_retries_remote_disconnected`
+      - `test_openai_compatible_embedder_retries_ssl_eof`
+  - 在 [rag/seraph_rag/embeddings.py](/home/cas/Desktop/SERAPH/rag/seraph_rag/embeddings.py) 中：
+    - 将 `RemoteDisconnected`
+    - 与 `SSLEOFError`
+    - 一并加入 `_is_retryable_embedding_error(...)`
+- **验证**：
+  - 单测：
+    - `PYTHONPATH=rag pytest rag/tests/test_embedding_openai_compatible.py rag/tests/test_embedding_config.py rag/tests/test_real_crate_runner.py rag/tests/test_harness_prompt.py rag/tests/test_retrieve.py rag/tests/test_compile_check.py -q`
+    - `56 passed`
+  - 真实 crate rerun：
+    - `sys-info-0.7.0`：`phase3_run_failed -> validated`
+    - `stack-0.3.0`：`phase3_run_failed -> attempted`
+    - `hashes-blake2`：`index_failed -> no_targets`
+    - `chrono-0.5.0-alpha.1`：`index_failed -> no_targets`
+    - `num-traits-0.2.15`：`index_failed -> no_targets`
+    - `crc32fast-1.3.2`：`index_failed -> no_targets`
+- **清洗后的 latest-code 最终聚合结果**：
+  - `validated = 32`
+  - `bug = 1`
+  - `runtime_error = 2`
+  - `attempted = 2`
+  - `crate_build_failed = 6`
+  - `no_targets = 15`
+  - `extract_failed = 6`
+  - `index_failed = 0`
+  - `phase3_run_failed = 0`
+  - 结果快照：
+    - [docs/research/deepsurf-round1-latest-20260429-cleaned.json](/home/cas/Desktop/SERAPH/docs/research/deepsurf-round1-latest-20260429-cleaned.json)
+    - [docs/research/deepsurf-round1-latest-20260429-cleaned.csv](/home/cas/Desktop/SERAPH/docs/research/deepsurf-round1-latest-20260429-cleaned.csv)
+    - [docs/research/deepsurf-round1-latest-20260429-cleaned.md](/home/cas/Desktop/SERAPH/docs/research/deepsurf-round1-latest-20260429-cleaned.md)
+- **论文可写点**：
+  - 这不是 Rust 语义建模缺口，
+    - 而是端到端 LLM + embedding fuzzing 工具的 infra 鲁棒性缺口。
+  - 如果不把这类瞬时断连单独剥离，
+    - 就会把“网络 / 网关抖动”
+    - 误写成“Rust harness synthesis 能力边界”。
+  - 因而 SERAPH 的 evaluation 不仅要区分
+    - Rust-specific 语义失败，
+    - 还要区分 embedding / retrieval / gateway 层的可恢复基础设施失败。
+  - 在进一步把 Phase 3 compile report 中的 “crate/lib 自身编不过当前 toolchain” 单独识别出来之后，
+    - latest-state round-1 的真实 harness synthesis 残余
+    - 进一步缩小到仅 `2` 个：
+      - `stack-0.3.0`
+      - `sized-chunks-0.6.2`
+    - 其余 `6` 个原先挂在 `attempted` 下的 case
+      - `http-0.1.19`
+      - `slice-deque-0.3.0`
+      - `slice-deque-0.1.15`
+      - `scratchpad-1.3.0`
+      - `serde_json-1.0.96`
+      - `leapfrog-0.2.1`
+    - 更准确地说属于：
+      - `crate_build_failed`
+    - 即：
+      - target crate 在当前 stable/toolchain/依赖配置下就编不过，
+      - 不是 harness 生成未收敛。
+
+### 9.21 2026-04-29 全新 latest-state full rerun 把残余失败进一步收束成 3 类
+
+- **最终 fresh full-rerun 聚合结果**：
+  - workspace：
+    - `/tmp/seraph-deepsurf-round1-fullrerun-20260429`
+  - 快照：
+    - [docs/research/deepsurf-round1-latest-20260429-fullrerun.json](/home/cas/Desktop/SERAPH/docs/research/deepsurf-round1-latest-20260429-fullrerun.json)
+    - [docs/research/deepsurf-round1-latest-20260429-fullrerun.csv](/home/cas/Desktop/SERAPH/docs/research/deepsurf-round1-latest-20260429-fullrerun.csv)
+    - [docs/research/deepsurf-round1-latest-20260429-fullrerun.md](/home/cas/Desktop/SERAPH/docs/research/deepsurf-round1-latest-20260429-fullrerun.md)
+  - 计数：
+    - `validated = 35`
+    - `bug = 1`
+    - `runtime_error = 1`
+    - `crate_build_failed = 6`
+    - `extract_failed = 6`
+    - `no_targets = 15`
+- **相比前一版 targeted-rerun aggregate**：
+  - `validated`：
+    - `34 -> 35`
+  - `runtime_error`：
+    - `2 -> 1`
+  - 这说明：
+    - 在最新代码状态下重新从头 replay，
+    - 不仅清掉了历史 `attempted` 残留，
+    - 也把残余失败面压缩到了一个更清晰、更适合论文描述的集合。
+
+#### 9.21.1 类别 A：确认的 crate 内部运行期 bug
+
+- **`RUSTSAN::id-map-0.2.1`**
+  - target：
+    - `api::id_map::IdMap::into_iter`
+  - workspace：
+    - `/tmp/seraph-deepsurf-round1-fullrerun-20260429/id-map-0.2.1`
+  - 证据：
+    - `runtime_error_001_01.json` 明确写出：
+      - `slice::get_unchecked_mut` 在 `src/lib.rs:123` 触发越界前提破坏
+      - 且问题发生在 `insert` / `clear` 之后、`into_iter` 完成之前
+  - 含义：
+    - 这是最新 full rerun 中最干净的“SERAPH 真的挖到 crate 自身 unsafe 状态 bug”的例子，
+    - 不是 harness 编译噪声，也不是 setup 缺口制造的假阳性。
+
+#### 9.21.2 类别 B：由 Rust owner/state 前置条件缺口触发的语义误报
+
+- **`RUSTSAN::arenavec-0.1.1`**
+  - target：
+    - `api::arenavec::common::SliceVec::split_off`
+  - workspace：
+    - `/tmp/seraph-deepsurf-round1-fullrerun-20260429/arenavec-0.1.1`
+  - 运行期现象：
+    - `runtime_error_001_01_fixed_01.json` / `runtime_response_001_01_fixed_01.json`
+      - 都把错误总结为：
+        - `arena overflow: 164 > 102`
+        - 当前 `SliceVec` 被填入的数据量超过 backing arena 可承载容量
+  - 为什么这不应和 `id-map` 放在同一类：
+    - 这里暴露的不是 crate 内部 unsafe 越界，
+    - 而是 harness 没有维护 arena-backed owner 的资源耦合不变量：
+      - `SliceVec` 长度增长
+      - 必须与 arena 初始化容量保持一致
+    - 换句话说：
+      - 这是 Rust arena/owner 模式下的“状态关系约束没有被 context / harness 保守表达出来”，
+      - 比较接近 semantic false positive，
+      - 不是高置信度 crate bug。
+  - 对工具设计的启发：
+    - 仅仅知道“怎么构造 owner”还不够，
+    - 还要把 owner-backed container 的资源关系写进 prompt / context：
+      - backing arena capacity
+      - owner logical capacity
+      - 后续 push / extend 的上界
+    - 这是一类很 Rust-specific 的 harness honest-state 问题，
+      - 尤其常见于 arena、slab、region、manual allocation 风格库。
+
+#### 9.21.3 类别 C：crate/toolchain 兼容性失败，而不是 SERAPH harness non-convergence
+
+- **同属“当前 stable/toolchain 下 crate 自身编不过”的 6 个 case**：
+  - `ERASAN::http-0.1.19`
+  - `ERASAN::slice-deque-0.3.0`
+  - `RUSTSAN::slice-deque-0.1.15`
+  - `RUSTSAN::scratchpad-1.3.0`
+  - `RUG::serde_json-1.0.96`
+  - `CRABTREE::leapfrog-0.2.1`
+- **它们实际上还可以再拆成 3 个子类**：
+
+- **子类 C1：旧 unsafe raw-pointer 写法被现代 stable 编译器直接拒绝**
+  - `http-0.1.19`
+  - `slice-deque-0.3.0`
+  - `slice-deque-0.1.15`
+  - `scratchpad-1.3.0`
+  - 共同编译错误：
+    - `implicit autoref creates a reference to the dereference of a raw pointer`
+    - `#[deny(dangerous_implicit_autorefs)]`
+  - 典型位置：
+    - `http`：
+      - `src/header/map.rs`
+    - `slice-deque`：
+      - `src/lib.rs:785` / `src/lib.rs:863`
+    - `scratchpad`：
+      - `src/traits.rs:1359`
+  - 含义：
+    - 这是 legacy unsafe crate 与现代编译器检查更严格之后的兼容性冲突，
+    - 不是 SERAPH 没能把 harness 修好，
+    - 即使换一个极简 harness，也会在编 crate/lib 本体时失败。
+
+- **子类 C2：依赖解析 / 版本漂移导致 crate 代码与当下依赖组合失配**
+  - `serde_json-1.0.96`
+  - 关键错误：
+    - `cannot find derive macro 'Deserialize' in this scope`
+  - 现象上更像：
+    - 老版本 crate 源码
+    - 在当前解析到的 `serde` 版本组合下
+    - 已经不再满足当年的 derive / feature 假设
+  - 含义：
+    - 这属于 ecosystem drift，
+    - 不应被记到“Rust harness synthesis 失败”头上。
+
+- **子类 C3：crate 明确要求 nightly feature，而评测环境是 stable**
+  - `leapfrog-0.2.1`
+  - 关键错误：
+    - `#![feature(allocator_api)] may not be used on the stable release channel`
+    - `#![feature(const_fn_trait_bound)] may not be used on the stable release channel`
+  - 含义：
+    - 这是 toolchain channel mismatch，
+    - 本质上是评测环境与 crate 需求不兼容，
+    - 不是 harness 生成问题。
+
+#### 9.21.4 对论文表述的直接价值
+
+- **这轮最终 full rerun 说明：latest-state SERAPH 的残余失败已经不能笼统写成 “LLM 还没学会 Rust”**
+  - 更准确的拆法应该是：
+    - 真实 crate bug：
+      - `id-map-0.2.1`
+    - Rust-specific honest-state / precondition 缺口造成的语义误报：
+      - `arenavec-0.1.1`
+    - crate/toolchain/依赖兼容性失败：
+      - `http`
+      - `slice-deque` 两个版本
+      - `scratchpad`
+      - `serde_json`
+      - `leapfrog`
+- **这比单纯汇报一个 `bug` 数字更诚实**：
+  - 最新 fresh full-rerun 里，
+    - `bug = 1`
+    - `runtime_error = 1`
+  - 也就是说：
+    - `id-map` 是高置信度真实库 bug；
+    - `arenavec` 已经被正式从 `bug` 降成了 `runtime_error`，
+      - 更准确地落在 documented/precondition panic 这一类。
+- **对下一步工具设计的指导也更具体**：
+  - Phase 3 不只是继续“提高编译通过率”，
+  - 还应增加：
+    - semantic panic triage
+      - 把 documented/precondition panic 与 internal unsafe bug 分开
+    - owner-state relational guards
+      - 尤其针对 arena-backed / allocation-coupled owners
+  - 这样后续再跑真实 crate，
+    - 才能把“语言特性导致的 harness honest-state 缺口”
+    - 与“crate 本身问题”
+    - 更稳定地区分开。
+
+### 9.22 2026-04-29 runtime triage 聚合层修复：`invalid_input_or_precondition` 不应再被 full-rerun 统计回写成 `bug`
+
+- **触发案例**：
+  - `RUSTSAN::arenavec-0.1.1`
+  - workspace：
+    - `/tmp/seraph-deepsurf-round1-fullrerun-20260429/arenavec-0.1.1`
+- **现象**：
+  - `smoke_001_index.json` 因为只看进程退出码和 panic 文本，
+    - 仍会把这类 case 记成：
+      - `status = bug`
+      - `classification = panic_detected`
+  - 但 `runtime_error_001_index.json` 经过 LLM runtime diagnosis 后，
+    - 已经正确降成：
+      - `status = runtime_error`
+      - `classification = invalid_input_or_precondition`
+      - `bug = false`
+  - 旧的 `scripts/evaluate_deepsurf_round1.py::summarize_phase3(...)`
+    - 仍然优先看 `smoke_001_index.json` 的 `bug_count`
+    - 于是最终聚合会把这类 case 又抬回：
+      - `outcome = bug`
+- **根因**：
+  - 当前流水线里，
+    - `smoke_run`
+      - 只是粗粒度“有无 panic / 非零退出”筛查
+    - `runtime_diagnose`
+      - 才是更细粒度的语义 triage
+  - 但最终 round-1 聚合没有尊重这个更细粒度 triage 结果，
+    - 造成了：
+      - “粗分类先标 bug”
+      - “细分类已经撤销 bug”
+      - “最终聚合又按粗分类记回 bug”
+    - 的前后不一致。
+- **修复**：
+  - 在 [scripts/evaluate_deepsurf_round1.py](/home/cas/Desktop/SERAPH/scripts/evaluate_deepsurf_round1.py) 里，
+    - 让 `summarize_phase3(...)`
+    - 在存在 `runtime_error_001_index.json` 时，
+    - 优先采用它的状态：
+      - `bug -> outcome=bug`
+      - `runtime_error -> outcome=runtime_error`
+    - 只有缺少 runtime diagnosis 时，
+      - 才退回 `smoke bug_count` 的粗粒度结果。
+- **验证**：
+  - 单测：
+    - `PYTHONPATH=rag pytest rag/tests/test_evaluate_deepsurf_round1.py rag/tests/test_runtime_diagnose.py -q`
+    - `6 passed`
+  - 新增回归测试：
+    - `test_summarize_phase3_uses_runtime_diagnosis_to_downgrade_precondition_panics`
+  - 对真实 `arenavec` workspace 直接调用 `summarize_phase3(...)`：
+    - 旧：
+      - `outcome = bug`
+    - 新：
+      - `outcome = runtime_error`
+    - 同时保留：
+      - `top_api_status = validated`
+      - `smoke_status = bug`
+      - `runtime_issue_count = 1`
+- **论文可写点**：
+  - 这说明 SERAPH 的评测不只是“模型能不能生成代码”，
+    - 还包括：
+      - 多阶段诊断结果在最终聚合层是否语义一致
+  - 如果聚合层仍以最粗的 panic 计数覆盖更细的 runtime triage，
+    - 就会把
+      - documented precondition panic
+    - 误记成
+      - crate bug
+  - 因而对 Rust fuzz-harness synthesis 的 honest evaluation，
+    - 不仅要做 runtime diagnosis，
+    - 还要保证最终 benchmark 统计真正采用了 diagnosis 的结论。

@@ -43,6 +43,9 @@ _FN_ITEM_PLACEHOLDER_POINTEE_RE = re.compile(
     re.DOTALL,
 )
 _HARNESS_ROUND_RE = re.compile(r"harness_(?P<round>\d{3})_\d{2}(?:_fixed_\d{2})?\.rs$")
+_CARGO_COMPILE_FAILED_RE = re.compile(
+    r"error:\s+could not compile `(?P<crate>[^`]+)`(?: \((?P<kind>[^)]+)\))? due to"
+)
 
 
 def run_compile_check(
@@ -79,6 +82,7 @@ def run_compile_check(
         "stdout": stdout,
         "stderr": stderr,
     }
+    result.update(_compile_failure_metadata(harness, exit_code, stderr, status))
     output = Path(report_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -106,6 +110,9 @@ def run_compile_checks(
             "report": str(report_path),
             "status": report["status"],
             "exit_code": report["exit_code"],
+            "failure_kind": report.get("failure_kind"),
+            "failed_crate": report.get("failed_crate"),
+            "failed_target_kind": report.get("failed_target_kind"),
         })
 
     status = "ok" if all(report["status"] == "ok" for report in reports) else "failed"
@@ -125,6 +132,49 @@ def _render_command(command_template: str, harness: Path) -> str:
     return command_template.format(harness=quoted_harness)
 
 
+def _compile_failure_metadata(
+    harness: Path,
+    exit_code: int,
+    stderr: str,
+    status: str,
+) -> Dict[str, Any]:
+    if status == "ok":
+        return {
+            "failure_kind": None,
+            "failed_crate": None,
+            "failed_target_kind": None,
+        }
+    if exit_code == SEMANTIC_GUARD_EXIT_CODE and stderr.startswith("SERAPH semantic guard:"):
+        return {
+            "failure_kind": "semantic_guard_failed",
+            "failed_crate": None,
+            "failed_target_kind": None,
+        }
+
+    match = None
+    for candidate in _CARGO_COMPILE_FAILED_RE.finditer(stderr):
+        match = candidate
+
+    if match is None:
+        return {
+            "failure_kind": "command_failed",
+            "failed_crate": None,
+            "failed_target_kind": None,
+        }
+
+    failed_crate = match.group("crate")
+    failed_target_kind = match.group("kind")
+    harness_name = harness.stem
+    failure_kind = "harness_compile_failed"
+    if failed_crate != harness_name:
+        failure_kind = "crate_build_failed"
+    return {
+        "failure_kind": failure_kind,
+        "failed_crate": failed_crate,
+        "failed_target_kind": failed_target_kind,
+    }
+
+
 def _semantic_guard_failure(harness: Path) -> str | None:
     source = harness.read_text(encoding="utf-8")
     for match in _DIVERGING_PLACEHOLDER_RE.finditer(source):
@@ -135,7 +185,7 @@ def _semantic_guard_failure(harness: Path) -> str | None:
                 f"`{match.group('name')}` can fake arbitrary target types; "
                 "replace it with a real public setup chain or an early return.\n"
             )
-    unsafe_fabrication_marker = _unsafe_fabrication_marker(source)
+    unsafe_fabrication_marker = _unsafe_fabrication_marker(harness, source)
     if unsafe_fabrication_marker is not None:
         return (
             "SERAPH semantic guard: unsafe initialization trick "
@@ -154,11 +204,31 @@ def _semantic_guard_failure(harness: Path) -> str | None:
     return None
 
 
-def _unsafe_fabrication_marker(source: str) -> str | None:
+def _unsafe_fabrication_marker(harness: Path, source: str) -> str | None:
     for marker in _UNSAFE_FABRICATION_MARKERS:
+        if marker == "Box::into_raw(" and _context_backed_box_into_raw_bridge(harness, source):
+            continue
+        if marker == "assume_init(" and _target_assume_init_only_within_markers(harness, source):
+            continue
         if marker in source:
             return marker
     return None
+
+
+def _target_assume_init_only_within_markers(harness: Path, source: str) -> bool:
+    marker_window = _target_marker_window(source)
+    if marker_window is None:
+        return False
+    enter_match, ok_match, target_api_id = marker_window
+    if "assume_init" not in _target_call_names(harness, target_api_id):
+        return False
+
+    found = False
+    for match in re.finditer(re.escape("assume_init("), source):
+        found = True
+        if match.start() < enter_match.end() or match.start() >= ok_match.start():
+            return False
+    return found
 
 
 def _unsafe_input_slice_failure(source: str) -> str | None:
@@ -239,13 +309,10 @@ def _has_local_idx_guard(prefix: str) -> bool:
 
 
 def _missing_target_call_between_markers(harness: Path, source: str) -> str | None:
-    enter_match = _ENTER_MARKER_RE.search(source)
-    ok_match = _OK_MARKER_RE.search(source)
-    if enter_match is None or ok_match is None:
+    marker_window = _target_marker_window(source)
+    if marker_window is None:
         return None
-    target_api_id = enter_match.group(1)
-    if ok_match.group(1) != target_api_id:
-        return None
+    enter_match, ok_match, target_api_id = marker_window
     between = source[enter_match.end() : ok_match.start()]
     for method_name in _target_call_names(harness, target_api_id):
         for match in re.finditer(rf"(\.|::|\b){re.escape(method_name)}", between):
@@ -255,6 +322,17 @@ def _missing_target_call_between_markers(harness: Path, source: str) -> str | No
         "SERAPH semantic guard: expected a real target call between "
         f"SERAPH_STEP_ENTER and SERAPH_STEP_OK for `{target_api_id}`.\n"
     )
+
+
+def _target_marker_window(source: str) -> tuple[re.Match[str], re.Match[str], str] | None:
+    enter_match = _ENTER_MARKER_RE.search(source)
+    ok_match = _OK_MARKER_RE.search(source)
+    if enter_match is None or ok_match is None:
+        return None
+    target_api_id = enter_match.group(1)
+    if ok_match.group(1) != target_api_id:
+        return None
+    return enter_match, ok_match, target_api_id
 
 
 def _target_call_names(harness: Path, target_api_id: str) -> List[str]:
@@ -269,13 +347,8 @@ def _target_call_names(harness: Path, target_api_id: str) -> List[str]:
 
 
 def _context_target_path_leaf(harness: Path, target_api_id: str) -> str | None:
-    match = _HARNESS_ROUND_RE.search(harness.name)
-    if match is None:
-        return None
-    if harness.parent.name != "fuzz":
-        return None
-    context_path = harness.parent.parent / "contexts" / "rag_target_{}.md".format(match.group("round"))
-    if not context_path.exists():
+    context_path = _context_path_for_harness(harness)
+    if context_path is None or not context_path.exists():
         return None
     api_id = None
     target_path = None
@@ -287,6 +360,56 @@ def _context_target_path_leaf(harness: Path, target_api_id: str) -> str | None:
     if api_id != target_api_id or not target_path:
         return None
     return target_path.rsplit("::", 1)[-1]
+
+
+def _context_backed_box_into_raw_bridge(harness: Path, source: str) -> bool:
+    if "Box::into_raw(" not in source:
+        return False
+    context_path = _context_path_for_harness(harness)
+    if context_path is None or not context_path.exists():
+        return False
+
+    text = context_path.read_text(encoding="utf-8")
+    if "## Known Reachable Paths" not in text:
+        return False
+    setup_section = text.split("## Known Reachable Paths", 1)[1]
+    if "## " in setup_section:
+        setup_section = setup_section.split("## ", 1)[0]
+
+    for line in setup_section.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("- ") or " — " not in stripped or ": " not in stripped:
+            continue
+        _, remainder = stripped.split(": ", 1)
+        api_path, signature_and_meta = remainder.split(" — ", 1)
+        signature = signature_and_meta.split(" [", 1)[0]
+        if "*mut" not in signature and "*const" not in signature:
+            continue
+        if _source_calls_context_setup_api(source, api_path.strip()):
+            return True
+    return False
+
+
+def _source_calls_context_setup_api(source: str, api_path: str) -> bool:
+    path_parts = [part for part in api_path.split("::") if part]
+    if len(path_parts) < 2:
+        return False
+    owner_name = path_parts[-2]
+    method_name = path_parts[-1]
+    pattern = re.compile(
+        rf"\b{re.escape(owner_name)}\b(?:\s*::\s*<[^>]+>)?\s*::\s*{re.escape(method_name)}"
+    )
+    for match in pattern.finditer(source):
+        if _call_suffix_starts_at(source, match.end()):
+            return True
+    return False
+
+
+def _context_path_for_harness(harness: Path) -> Path | None:
+    match = _HARNESS_ROUND_RE.search(harness.name)
+    if match is None or harness.parent.name != "fuzz":
+        return None
+    return harness.parent.parent / "contexts" / "rag_target_{}.md".format(match.group("round"))
 
 
 def _call_suffix_starts_at(source: str, index: int) -> bool:

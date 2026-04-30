@@ -101,6 +101,9 @@ _SIGNATURE_BUILTIN_TYPE_TOKENS = {
     "u8",
     "usize",
 }
+_OWNER_HINT_ALLOWED_UPPER_TOKENS = {
+    "Default",
+}
 
 
 def unsafe_priority(api_id: str, graph: nx.Graph) -> float:
@@ -327,7 +330,13 @@ def _render_context_markdown_unbudgeted(
         type_index,
         trait_index,
     )
-    setup_api_ids = {entry["api"]["api_id"] for entry in visible_setup_entries}
+    display_setup_entries = _preferred_display_setup_entries(
+        visible_setup_entries,
+        target_api,
+        compile_hints,
+        type_index,
+    )
+    setup_api_ids = {entry["api"]["api_id"] for entry in display_setup_entries}
     related_apis = _collect_related_apis(
         knowledge,
         graph,
@@ -338,8 +347,9 @@ def _render_context_markdown_unbudgeted(
     )
     variant_opportunities = _collect_variant_opportunities(
         target_api,
-        visible_setup_entries,
+        display_setup_entries,
         related_apis,
+        compile_hints,
     )
     lines = [
         "# SERAPH Rust Harness Context",
@@ -367,6 +377,7 @@ def _render_context_markdown_unbudgeted(
         "",
     ]
     target_usage_hints = _collect_target_usage_hints(target_api)
+    owner_type_usage_hints = _collect_owner_type_usage_hints(target_api, type_index, knowledge)
     if target_usage_hints:
         lines.extend(["## Target Usage Hints"])
         for hint in target_usage_hints:
@@ -375,7 +386,7 @@ def _render_context_markdown_unbudgeted(
     lines.extend([
         "## Known Reachable Paths",
     ])
-    for entry in visible_setup_entries:
+    for entry in display_setup_entries:
         api = entry["api"]
         lines.append(
             "- {}: {} — {} [goal={} basis={} produces={} depth={}]".format(
@@ -407,6 +418,15 @@ def _render_context_markdown_unbudgeted(
                     item["path"],
                     ", ".join(item["required_methods"]) or "(none)",
                     ", ".join(item["provided_methods"]) or "(none)",
+                )
+            )
+    if compile_hints["trait_implementor_facts"]:
+        lines.extend(["", "### Trait Implementor Facts"])
+        for item in compile_hints["trait_implementor_facts"]:
+            lines.append(
+                "- {}: public_implementors={}".format(
+                    item["path"],
+                    ", ".join(item["public_implementors"]),
                 )
             )
     if compile_hints["trait_methods"]:
@@ -442,10 +462,42 @@ def _render_context_markdown_unbudgeted(
                     ", ".join(item["other_explicit_impls"]) or "(none)",
                 )
             )
+    if compile_hints["owner_type_facts"]:
+        lines.extend(["", "### Owner Type Facts"])
+        for item in compile_hints["owner_type_facts"]:
+            lines.append(
+                "- {}: generic_params={}; where_clauses={}".format(
+                    item["path"],
+                    ", ".join(item["generic_params"]) or "(none)",
+                    "; ".join(item["where_clauses"]) or "(none)",
+                )
+            )
+    if compile_hints["owner_doc_facts"]:
+        lines.extend(["", "### Owner Documentation Facts"])
+        for item in compile_hints["owner_doc_facts"]:
+            lines.append("- {}: {}".format(item["path"], item["fact"]))
+    if compile_hints["owner_construction_bridges"]:
+        lines.extend(["", "### Owner Construction Bridges"])
+        for item in compile_hints["owner_construction_bridges"]:
+            where_suffix = ""
+            if item["where_clauses"]:
+                where_suffix = " [where={}]".format("; ".join(item["where_clauses"]))
+            lines.append(
+                "- {}: {} via impl {}{}".format(
+                    item["path"],
+                    item["call"],
+                    item["impl"],
+                    where_suffix,
+                )
+            )
     if compile_hints["output_initializers"]:
         lines.extend(["", "### Output Initialization Facts"])
         for item in compile_hints["output_initializers"]:
             lines.append("- {}: prefer `{}`".format(item["path"], item["statement"]))
+    if owner_type_usage_hints:
+        lines.extend(["", "## Owner Type Usage Hints"])
+        for hint in owner_type_usage_hints:
+            lines.append("- `{}`".format(hint))
     lines.extend([
         "",
         "## Related APIs",
@@ -475,7 +527,7 @@ def _render_context_markdown_unbudgeted(
     target_path = target_api.get("canonical_path", target.api_id)
     excluded_paths = {
         target_path,
-        *[entry["api"].get("canonical_path", entry["api"]["api_id"]) for entry in visible_setup_entries],
+        *[entry["api"].get("canonical_path", entry["api"]["api_id"]) for entry in display_setup_entries],
         *[api.get("canonical_path", api["api_id"]) for api in related_apis],
     }
     excluded_api_ids = {target.api_id, *setup_api_ids, *[api["api_id"] for api in related_apis]}
@@ -530,6 +582,76 @@ def _collect_target_usage_hints(target_api: Dict[str, Any], max_hints: int = 3) 
             if len(hints) >= max_hints:
                 return hints
     return hints
+
+
+def _collect_owner_type_usage_hints(
+    target_api: Dict[str, Any],
+    type_index: Dict[str, Dict[str, Any]],
+    knowledge: Dict[str, Any],
+    max_hints: int = 3,
+) -> List[str]:
+    owner_type_id = target_api.get("owner_type_id")
+    owner_type = type_index.get(owner_type_id or "")
+    if not owner_type or max_hints <= 0:
+        return []
+
+    owner_name = str(owner_type.get("name") or "").strip()
+    examples = str((owner_type.get("doc_sections") or {}).get("examples") or "").strip()
+    if not owner_name or not examples:
+        return []
+
+    blocks = _markdown_code_blocks(examples)
+    if not blocks:
+        blocks = [examples]
+
+    hints: List[str] = []
+    seen: Set[str] = set()
+    for block in blocks:
+        for raw_line in [line.strip() for line in block.splitlines() if line.strip()]:
+            if raw_line.startswith(("use ", "//", "#")):
+                continue
+            if owner_name not in raw_line:
+                continue
+            if not _owner_type_usage_hint_is_publicly_nameable(raw_line, owner_name, knowledge):
+                continue
+            hint = _one_line(raw_line)
+            if not hint or hint in seen:
+                continue
+            seen.add(hint)
+            hints.append(hint)
+            if len(hints) >= max_hints:
+                return hints
+    return hints
+
+
+def _owner_type_usage_hint_is_publicly_nameable(
+    snippet: str,
+    owner_name: str,
+    knowledge: Dict[str, Any],
+) -> bool:
+    if not re.search(r"\b{}\b".format(re.escape(owner_name)), snippet):
+        return False
+    if not any(token in snippet for token in ("::", "=", ";")):
+        return False
+
+    known_upper_tokens = set(_SIGNATURE_BUILTIN_TYPE_TOKENS)
+    known_upper_tokens.update(_OWNER_HINT_ALLOWED_UPPER_TOKENS)
+    for type_info in knowledge.get("types", []):
+        type_name = str(type_info.get("name") or "").strip()
+        if type_name:
+            known_upper_tokens.add(type_name)
+        canonical_tail = str(type_info.get("canonical_path") or "").rsplit("::", 1)[-1].strip()
+        if canonical_tail:
+            known_upper_tokens.add(canonical_tail)
+        for path in type_info.get("public_paths") or []:
+            tail = str(path).rsplit("::", 1)[-1].strip()
+            if tail:
+                known_upper_tokens.add(tail)
+
+    for token in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", snippet):
+        if token not in known_upper_tokens:
+            return False
+    return True
 
 
 def _markdown_code_blocks(text: str) -> List[str]:
@@ -812,6 +934,7 @@ def _fit_context_budget(markdown: str, max_context_chars: int) -> str:
         "## Variant Opportunities",
         "## Related APIs",
         "## Known Reachable Paths",
+        "## Owner Type Usage Hints",
         "## Compile-Time Facts",
         "## Target API",
         "## Crate Facts",
@@ -894,6 +1017,9 @@ def _collect_required_setup_entries(
     owner_type_id = target_api.get("owner_type_id")
     if owner_type_id and not _is_low_signal_type(type_index.get(owner_type_id)):
         seed_types.append(owner_type_id)
+    for type_id in _owner_specialization_seed_type_ids(target_api, knowledge, type_index):
+        if not _is_low_signal_type(type_index.get(type_id)):
+            seed_types.append(type_id)
     owner_trait_id = target_api.get("owner_trait_id")
     if owner_trait_id and _api_receiver_mentions_self(target_api):
         for type_id in _trait_implementor_type_ids(graph, owner_trait_id):
@@ -989,6 +1115,23 @@ def _visible_setup_entries(entries: List[Dict[str, Any]], limit: int) -> List[Di
     return selected
 
 
+def _preferred_display_setup_entries(
+    entries: List[Dict[str, Any]],
+    target_api: Dict[str, Any],
+    compile_hints: Dict[str, List[Dict[str, Any]]],
+    type_index: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    owner_type_id = str(target_api.get("owner_type_id") or "").strip()
+    owner_type = type_index.get(owner_type_id)
+    owner_path = _type_display_name(owner_type, owner_type_id) if owner_type_id else ""
+    has_direct_owner_conversion = any(
+        item.get("path") == owner_path for item in compile_hints.get("owner_construction_bridges", [])
+    )
+    if not has_direct_owner_conversion:
+        return entries
+    return [entry for entry in entries if entry.get("basis") != "owner_bridge"]
+
+
 def _collect_compile_hints(
     knowledge: Dict[str, Any],
     graph: nx.Graph,
@@ -1011,6 +1154,10 @@ def _collect_compile_hints(
         owner_type_id = api_node.get("owner_type_id")
         if owner_type_id:
             relevant_type_ids.add(owner_type_id)
+            owner_type = type_index.get(owner_type_id)
+            if owner_type:
+                relevant_trait_ids.update(_where_clause_trait_ids(owner_type, knowledge))
+                relevant_type_ids.update(_where_clause_type_ids(owner_type, knowledge))
         if api and api.get("owner_trait_id"):
             relevant_trait_ids.add(api["owner_trait_id"])
         accepted_type_ids = _graph_neighbor_ids(graph, api_id, "api_accepts_type")
@@ -1018,6 +1165,7 @@ def _collect_compile_hints(
         type_trait_candidate_ids.update(accepted_type_ids)
         if api:
             relevant_type_ids.update(_where_clause_type_ids(api, knowledge))
+            relevant_trait_ids.update(_where_clause_trait_ids(api, knowledge))
         relevant_type_ids.update(_expanded_produced_type_ids(graph, api_id))
         relevant_trait_ids.update(_graph_neighbor_ids(graph, api_id, "api_accepts_trait"))
 
@@ -1056,6 +1204,7 @@ def _collect_compile_hints(
 
     traits = []
     trait_methods = []
+    trait_implementor_facts = []
     for trait_id in sorted(relevant_trait_ids, key=lambda value: _trait_display_name(trait_index.get(value), graph, value)):
         trait_info = trait_index.get(trait_id)
         if not trait_info:
@@ -1067,8 +1216,22 @@ def _collect_compile_hints(
                 "path": _trait_display_name(trait_info, graph, trait_id),
                 "required_methods": required_methods,
                 "provided_methods": provided_methods,
-            }
+                }
+            )
+        public_implementors = list(
+            dict.fromkeys(
+                _type_display_name(type_index.get(type_id), type_id)
+                for type_id in _trait_implementor_type_ids(graph, trait_id)
+                if _graph_type_is_publicly_nameable(graph, type_id) and type_index.get(type_id)
+            )
         )
+        if public_implementors:
+            trait_implementor_facts.append(
+                {
+                    "path": _trait_display_name(trait_info, graph, trait_id),
+                    "public_implementors": public_implementors,
+                }
+            )
         required_method_names = set(required_methods)
         provided_method_names = set(provided_methods)
         trait_method_apis = sorted(
@@ -1175,12 +1338,50 @@ def _collect_compile_hints(
             }
         )
 
+    owner_type_facts = []
+    owner_type_ids = {
+        str(apis_by_id[api_id].get("owner_type_id") or "")
+        for api_id in relevant_api_ids
+        if api_id in apis_by_id
+    }
+    owner_type_ids.discard("")
+    for type_id in sorted(owner_type_ids, key=lambda value: _type_display_name(type_index.get(value), value)):
+        type_info = type_index.get(type_id)
+        if not type_info:
+            continue
+        generic_params = [str(item).strip() for item in (type_info.get("generic_params") or []) if str(item).strip()]
+        where_clauses = [str(item).strip() for item in (type_info.get("where_clauses") or []) if str(item).strip()]
+        if not generic_params and not where_clauses:
+            continue
+        owner_type_facts.append(
+            {
+                "path": _type_display_name(type_info, type_id),
+                "generic_params": generic_params,
+                "where_clauses": where_clauses,
+            }
+        )
+
+    owner_doc_facts = _collect_owner_documentation_facts(
+        knowledge,
+        owner_type_ids,
+        type_index,
+    )
+    owner_construction_bridges = _collect_owner_construction_bridges(
+        knowledge,
+        owner_type_ids,
+        type_index,
+    )
+
     return {
         "imports": imports,
         "traits": traits,
+        "trait_implementor_facts": trait_implementor_facts,
         "trait_methods": trait_methods,
         "enums": enums,
         "type_traits": type_traits,
+        "owner_type_facts": owner_type_facts,
+        "owner_doc_facts": owner_doc_facts,
+        "owner_construction_bridges": owner_construction_bridges,
         "output_initializers": output_initializers,
     }
 
@@ -1190,6 +1391,191 @@ def _where_clause_type_ids(api: Dict[str, Any], knowledge: Dict[str, Any]) -> Se
     for clause in api.get("where_clauses", []) or []:
         matched.update(_matching_type_ids_in_knowledge(str(clause), knowledge))
     return matched
+
+
+def _where_clause_trait_ids(api: Dict[str, Any], knowledge: Dict[str, Any]) -> Set[str]:
+    matched: Set[str] = set()
+    for clause in api.get("where_clauses", []) or []:
+        matched.update(_matching_trait_ids_in_knowledge(str(clause), knowledge))
+    return matched
+
+
+def _collect_owner_documentation_facts(
+    knowledge: Dict[str, Any],
+    owner_type_ids: Set[str],
+    type_index: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, str]]:
+    modules_by_id = {module.get("module_id"): module for module in knowledge.get("modules", [])}
+    facts: List[Dict[str, str]] = []
+    seen: Set[tuple[str, str]] = set()
+    for type_id in sorted(owner_type_ids, key=lambda value: _type_display_name(type_index.get(value), value)):
+        type_info = type_index.get(type_id)
+        if not type_info:
+            continue
+        candidates = [
+            str((knowledge.get("crate_meta") or {}).get("root_docs") or ""),
+            str(((knowledge.get("crate_meta") or {}).get("root_doc_sections") or {}).get("summary") or ""),
+            str(type_info.get("docs") or ""),
+            str((type_info.get("doc_sections") or {}).get("summary") or ""),
+            str((type_info.get("doc_sections") or {}).get("examples") or ""),
+        ]
+        module_info = modules_by_id.get(type_info.get("public_anchor_module_id") or "")
+        if module_info:
+            candidates.extend(
+                [
+                    str(module_info.get("docs") or ""),
+                    str((module_info.get("doc_sections") or {}).get("summary") or ""),
+                ]
+            )
+
+        for text in candidates:
+            fact = _owner_documentation_fact_from_text(text, type_info)
+            if not fact:
+                continue
+            key = (_type_display_name(type_info, type_id), fact)
+            if key in seen:
+                continue
+            seen.add(key)
+            facts.append(
+                {
+                    "path": _type_display_name(type_info, type_id),
+                    "fact": fact,
+                }
+            )
+            break
+    return facts
+
+
+def _owner_documentation_fact_from_text(text: str, type_info: Dict[str, Any]) -> Optional[str]:
+    normalized_text = str(text).strip()
+    if not normalized_text:
+        return None
+    owner_name = str(type_info.get("name") or "").strip()
+    owner_paths = [owner_name, *[str(path).strip() for path in (type_info.get("public_paths") or []) if str(path).strip()]]
+    owner_paths = [path for path in owner_paths if path]
+    keywords = ("default", "defaults", "omit", "omitted")
+
+    for fragment in _documentation_fragments(normalized_text):
+        one_line = _one_line(fragment)
+        lowered = one_line.lower()
+        if not one_line or not any(keyword in lowered for keyword in keywords):
+            continue
+        if not any(path in one_line or "{}<".format(path.rsplit("::", 1)[-1]) in one_line for path in owner_paths):
+            continue
+        return _summarize_owner_documentation_fact(one_line)
+    return None
+
+
+def _documentation_fragments(text: str) -> List[str]:
+    normalized = " ".join(str(text).replace("\r\n", "\n").split())
+    fragments = re.split(r"(?<=[.!?])\s+", normalized)
+    return [fragment.strip() for fragment in fragments if fragment.strip()]
+
+
+def _summarize_owner_documentation_fact(fact: str) -> str:
+    one_line = _one_line(fact)
+    lowered = one_line.lower()
+    if "omit" in lowered and "default" in lowered:
+        owner_shape_match = re.search(r"`([^`]+)`", one_line)
+        default_match = re.search(r"default(?:s)? to (?:a size of |size of |capacity of )?([A-Za-z0-9_]+)", lowered)
+        owner_shape = owner_shape_match.group(1).strip() if owner_shape_match else "owner type"
+        default_value = default_match.group(1).strip() if default_match else ""
+        if default_value:
+            return "omit the size; `{}` defaults to size {}".format(owner_shape, default_value)
+        return "omit the size; `{}` has a documented default size".format(owner_shape)
+    return one_line
+
+
+def _collect_owner_construction_bridges(
+    knowledge: Dict[str, Any],
+    owner_type_ids: Set[str],
+    type_index: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    trait_impls_by_type: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for impl_info in knowledge.get("trait_impl_registry", []):
+        target_type_id = str(impl_info.get("target_type_id") or "").strip()
+        if target_type_id:
+            trait_impls_by_type[target_type_id].append(impl_info)
+
+    bridges: List[Dict[str, Any]] = []
+    seen: Set[tuple[str, str, str]] = set()
+    for type_id in sorted(owner_type_ids, key=lambda value: _type_display_name(type_index.get(value), value)):
+        type_info = type_index.get(type_id)
+        if not type_info:
+            continue
+        for impl_info in trait_impls_by_type.get(type_id, []):
+            bridge = _owner_construction_bridge_from_impl(impl_info, type_info, type_id)
+            if not bridge:
+                continue
+            key = (bridge["path"], bridge["call"], bridge["impl"])
+            if key in seen:
+                continue
+            seen.add(key)
+            bridges.append(bridge)
+    return bridges
+
+
+def _owner_construction_bridge_from_impl(
+    impl_info: Dict[str, Any],
+    type_info: Dict[str, Any],
+    type_id: str,
+) -> Optional[Dict[str, Any]]:
+    trait_path = _trait_impl_display_path(impl_info)
+    owner_path = _type_display_name(type_info, type_id)
+    owner_display = _public_type_display_with_generics(type_info, str(impl_info.get("for_type_text") or ""))
+    trait_ref = str(impl_info.get("trait_ref_text") or "").strip() or trait_path
+    where_clauses = [
+        str(clause).strip() for clause in (impl_info.get("where_clauses") or []) if str(clause).strip()
+    ]
+
+    if _is_from_trait_path(trait_path) and _trait_conversion_source_text(impl_info):
+        return {
+            "path": owner_path,
+            "call": "{}::from(...)".format(owner_path),
+            "impl": "{} for {}".format(trait_ref, owner_display),
+            "where_clauses": where_clauses,
+        }
+    if _is_try_from_trait_path(trait_path) and _trait_conversion_source_text(impl_info):
+        return {
+            "path": owner_path,
+            "call": "{}::try_from(...)".format(owner_path),
+            "impl": "{} for {}".format(trait_ref, owner_display),
+            "where_clauses": where_clauses,
+        }
+    return None
+
+
+def _public_type_display_with_generics(type_info: Dict[str, Any], for_type_text: str) -> str:
+    path = _type_display_name(
+        type_info,
+        type_info.get("type_id") or type_info.get("canonical_path") or type_info.get("name") or "",
+    )
+    owner_name = str(type_info.get("name") or "").strip()
+    normalized_for_type = str(for_type_text).strip()
+    if owner_name and normalized_for_type.startswith(owner_name):
+        return "{}{}".format(path, normalized_for_type[len(owner_name) :])
+    generic_params = [str(item).strip() for item in (type_info.get("generic_params") or []) if str(item).strip()]
+    if generic_params:
+        return "{}<{}>".format(path, ", ".join(generic_params))
+    return path
+
+
+def _trait_conversion_source_text(impl_info: Dict[str, Any]) -> str:
+    trait_ref = str(impl_info.get("trait_ref_text") or "").strip()
+    match = re.search(r"(?:^|::)(?:From|TryFrom)<(.+)>$", trait_ref)
+    if not match:
+        return ""
+    return match.group(1).strip()
+
+
+def _is_from_trait_path(path: str) -> bool:
+    normalized = str(path).strip()
+    return normalized == "From" or normalized.endswith("::From")
+
+
+def _is_try_from_trait_path(path: str) -> bool:
+    normalized = str(path).strip()
+    return normalized == "TryFrom" or normalized.endswith("::TryFrom")
 
 
 def _matching_type_ids_in_knowledge(type_text: str, knowledge: Dict[str, Any]) -> Set[str]:
@@ -1215,6 +1601,29 @@ def _matching_type_ids_in_knowledge(type_text: str, knowledge: Dict[str, Any]) -
     return matched
 
 
+def _matching_trait_ids_in_knowledge(type_text: str, knowledge: Dict[str, Any]) -> Set[str]:
+    matched: Set[str] = set()
+    for trait_info in knowledge.get("trait_registry", []):
+        name = str(trait_info.get("name") or "").strip()
+        canonical_path = str(trait_info.get("canonical_path") or "").strip()
+        public_paths = [str(path).strip() for path in (trait_info.get("public_paths") or []) if str(path).strip()]
+        candidate_names = {
+            name,
+            canonical_path.rsplit("::", 1)[-1].strip(),
+            *[path.rsplit("::", 1)[-1].strip() for path in public_paths],
+        }
+        candidate_names.discard("")
+        if any(_text_mentions_token(type_text, candidate) for candidate in candidate_names):
+            matched.add(trait_info["trait_id"])
+            continue
+        if canonical_path and canonical_path in type_text:
+            matched.add(trait_info["trait_id"])
+            continue
+        if any(path and path in type_text for path in public_paths):
+            matched.add(trait_info["trait_id"])
+    return matched
+
+
 def _text_mentions_token(type_text: str, token: str) -> bool:
     normalized = (
         str(type_text)
@@ -1235,14 +1644,33 @@ def _collect_variant_opportunities(
     target_api: Dict[str, Any],
     setup_entries: List[Dict[str, Any]],
     related_apis: List[Dict[str, Any]],
+    compile_hints: Dict[str, List[Dict[str, Any]]],
 ) -> Dict[str, List[str]]:
-    setup_choices = [
+    setup_api_choices = [
         "setup API {} produces {}".format(
             _api_display_path(entry["api"]),
             ", ".join(entry["produced_types"]),
         )
         for entry in setup_entries[:3]
         if entry["produced_types"]
+    ]
+    derived_setup_choices = [
+        "documented owner setup shape: {}".format(item["fact"])
+        for item in compile_hints.get("owner_doc_facts", [])[:2]
+    ]
+    derived_setup_choices.extend(
+        [
+            "public conversion constructor available: {} via impl {}".format(
+                item["call"],
+                item["impl"],
+            )
+            for item in compile_hints.get("owner_construction_bridges", [])[:2]
+        ]
+    )
+    setup_choices = [
+        *setup_api_choices[:2],
+        *derived_setup_choices[:2],
+        *setup_api_choices[2:],
     ]
 
     input_choices = [
@@ -1516,6 +1944,78 @@ def _type_alias_target_expr(type_info: Dict[str, Any], knowledge: Dict[str, Any]
     if "=" not in line or ";" not in line:
         return None
     return line.split("=", 1)[1].rsplit(";", 1)[0].strip()
+
+
+def _owner_specialization_seed_type_ids(
+    target_api: Dict[str, Any],
+    knowledge: Dict[str, Any],
+    type_index: Dict[str, Dict[str, Any]],
+) -> List[str]:
+    owner_type_id = str(target_api.get("owner_type_id") or "").strip()
+    owner_type = type_index.get(owner_type_id)
+    if not owner_type:
+        return []
+
+    seed_type_ids: List[str] = []
+    for type_info in knowledge.get("types", []):
+        if str(type_info.get("kind") or "") != "type_alias":
+            continue
+        type_expr = _type_alias_target_expr(type_info, knowledge)
+        if not type_expr or not _type_expr_mentions_specific_type(type_expr, owner_type):
+            continue
+        for type_id in _matching_type_ids_in_knowledge(type_expr, knowledge):
+            if type_id == owner_type_id:
+                continue
+            if not type_index.get(type_id):
+                continue
+            seed_type_ids.append(type_id)
+    return list(dict.fromkeys(seed_type_ids))
+
+
+def _type_expr_mentions_specific_type(type_expr: str, type_info: Dict[str, Any]) -> bool:
+    normalized = str(type_expr).strip()
+    if not normalized:
+        return False
+
+    path_candidates = _type_path_candidates(type_info)
+    for candidate in path_candidates:
+        if "::" in candidate and candidate in normalized:
+            return True
+
+    tail_candidates = {
+        str(type_info.get("name") or "").strip(),
+        *[candidate.rsplit("::", 1)[-1].strip() for candidate in path_candidates],
+    }
+    tail_candidates.discard("")
+    return any(_text_mentions_token(normalized, candidate) for candidate in tail_candidates)
+
+
+def _type_path_candidates(type_info: Dict[str, Any]) -> List[str]:
+    candidates: List[str] = []
+    seen: Set[str] = set()
+
+    def add(candidate: str) -> None:
+        normalized = str(candidate).strip()
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        candidates.append(normalized)
+
+    canonical_path = str(type_info.get("canonical_path") or "").strip()
+    if canonical_path:
+        add(canonical_path)
+        if "::" in canonical_path:
+            add("::".join(canonical_path.split("::")[1:]))
+
+    for public_path in type_info.get("public_paths") or []:
+        normalized = str(public_path).strip()
+        if not normalized:
+            continue
+        add(normalized)
+        if "::" in normalized:
+            add("::".join(normalized.split("::")[1:]))
+
+    return candidates
 
 
 def _field_type_expr(field: Dict[str, Any], knowledge: Dict[str, Any]) -> Optional[str]:

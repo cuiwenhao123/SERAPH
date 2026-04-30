@@ -122,3 +122,69 @@ def test_run_runtime_diagnosis_marks_asan_as_bug(tmp_path):
     assert result["status"] == "bug"
     assert result["bug_count"] == 1
     assert result["reports"][0]["bug"] is True
+
+
+def test_run_runtime_diagnosis_downgrades_arena_capacity_panics(tmp_path):
+    context_path = tmp_path / "rag_target_001.md"
+    reports_dir = tmp_path / "reports"
+    smoke_index_path = reports_dir / "smoke_001_index.json"
+    harness_path = tmp_path / "fuzz" / "harness_001_01.rs"
+    harness_path.parent.mkdir(parents=True)
+    reports_dir.mkdir(parents=True)
+    harness_path.write_text("fn main() {}\n", encoding="utf-8")
+    context_path.write_text("## Target API\n- api_id: api::fixture::danger\n", encoding="utf-8")
+    (reports_dir / "smoke_001_01.json").write_text(
+        json.dumps(
+            {
+                "harness": str(harness_path),
+                "status": "bug",
+                "classification": "panic_detected",
+                "exit_code": 101,
+                "stdout": "",
+                "stderr": (
+                    "thread 'main' panicked at src/common.rs:714:5:\n"
+                    "arena overflow: 165 > 102\n"
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+    smoke_index_path.write_text(
+        json.dumps(
+            {
+                "round": 1,
+                "status": "bug",
+                "reports": [
+                    {
+                        "harness": str(harness_path),
+                        "report": str(reports_dir / "smoke_001_01.json"),
+                        "status": "bug",
+                        "classification": "panic_detected",
+                        "exit_code": 101,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_runtime_diagnosis(
+        context_path,
+        smoke_index_path,
+        reports_dir,
+        round_no=1,
+        command_template=(
+            "python3 -c \"import json; print(json.dumps({"
+            "'classification':'panic_or_crash',"
+            "'summary':'Calling SliceVec::split_off triggered a panic with message "
+            "\\\"arena overflow: 165 > 102\\\" from src/common.rs:714, indicating the "
+            "operation attempted to exceed arena capacity during the split on a populated "
+            "SliceVec.',"
+            "'is_bug':True}))\""
+        ),
+    )
+
+    assert result["status"] == "runtime_error"
+    assert result["bug_count"] == 0
+    assert result["reports"][0]["classification"] == "invalid_input_or_precondition"
+    assert result["reports"][0]["bug"] is False

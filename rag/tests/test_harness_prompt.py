@@ -37,6 +37,7 @@ def test_build_prompt_bundle_requests_run_case_modules():
     assert "Output only Rust code blocks, one harness variant per code block." in bundle["system_prompt"]
     assert "Emit a Rust case module, not a full executable." in bundle["system_prompt"]
     assert "Define `pub fn run_case(input: &[u8])` in every variant." in bundle["system_prompt"]
+    assert "Do not wrap `run_case` inside an extra module." in bundle["system_prompt"]
     assert "Do not generate `fn main()`, `afl::fuzz!`, or crate-level registry code." in bundle["system_prompt"]
     assert "You may design your own setup and call sequence using the facts in the context." in bundle["user_prompt"]
     assert "Prefer `Related APIs` as the main construction pool." in bundle["user_prompt"]
@@ -46,6 +47,8 @@ def test_build_prompt_bundle_requests_run_case_modules():
     )
     assert "Define `pub fn run_case(input: &[u8])` in every variant." in bundle["user_prompt"]
     assert "Keep all setup and the target call inside `run_case`." in bundle["user_prompt"]
+    assert "If `Owner Type Usage Hints` exist, prefer those documented concrete owner/setup shapes" in bundle["user_prompt"]
+    assert "Do not wrap `run_case` inside an extra module like `mod case_1`" in bundle["user_prompt"]
     assert "Return only Rust code blocks, one case module per code block" in bundle["user_prompt"]
     assert context.rstrip() in bundle["user_prompt"]
 

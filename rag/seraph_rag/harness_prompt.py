@@ -33,6 +33,7 @@ Output contract:
 - Output only Rust code blocks, one harness variant per code block.
 - Emit a Rust case module, not a full executable.
 - Define `pub fn run_case(input: &[u8])` in every variant.
+- Do not wrap `run_case` inside an extra module.
 - Call the Target API in every variant.
 - Call the exact Target API path named in the context between the SERAPH markers. Do not substitute a neighboring same-owner or same-signature API.
 - Preserve exact `SERAPH_STEP_ENTER:<step_no>:<api_id>` and `SERAPH_STEP_OK:<step_no>:<api_id>` markers around each successful target call.
@@ -95,10 +96,13 @@ Requirements:
 - You may design your own setup and call sequence using the facts in the context.
 - Define `pub fn run_case(input: &[u8])` in every variant.
 - Keep all setup and the target call inside `run_case`.
+- Do not wrap `run_case` inside an extra module like `mod case_1`; define it at the top level of the returned case module.
 - Prefer `Related APIs` as the main construction pool.
 - Use `Known Reachable Paths` as validated anchors when helpful, but do not copy them mechanically.
 - If `Target Usage Hints` exist, prefer those documented receiver and setup shapes before inventing wrapper bridges or alternate owner views.
+- If `Owner Type Usage Hints` exist, prefer those documented concrete owner/setup shapes before inventing generic arguments, owner bridges, or wrapper views.
 - Treat `Compile-Time Facts` as authoritative.
+- If `Owner Type Facts` surface generic parameters or where-clauses, treat them as compile-critical constraints when choosing concrete owner types.
 - If `Type Trait Facts` do not explicitly say a type is `Copy` or `Clone`, do not assume by-value indexing, repeated reuse, or `.clone()` is valid for that type.
 - If `Output Initialization Facts` provide a concrete initializer for a mutable output argument, use that factual initializer instead of guessing `Default`, `mem::zeroed`, or `MaybeUninit`.
 - Make variants meaningfully different when the context supports it. Prefer diversity in setup path, input shaping, boundary selection, state progression, or recoverable error exploration.
@@ -108,6 +112,7 @@ Requirements:
 - If a source slice and a mutable target view would come from the same backing buffer, prefer separate owners such as original input plus a clone, rather than borrowing both from the same owner at once.
 - If a setup API has generic or opaque inputs with no concrete bounds shown in the context, prefer a different surfaced constructor/producer with concrete argument shapes instead of inventing composite owners.
 - If multiple surfaced setup APIs can honestly reach the same owner, prefer a safe concrete producer before trying an `unsafe` raw-pointer/raw-parts constructor for diversity.
+- If `Boundary Choices` or same-owner helper APIs in `Related APIs` expose a factual precondition, satisfy it with those surfaced APIs instead of fabricating hidden state.
 - If a trait-based or generic producer returns an owner or collection whose concrete type is not inferable at the call site, add an explicit concrete type annotation or prefer another surfaced constructor with an honest concrete owner type.
 - If a surfaced trait helper is a provided associated function rather than an inherent constructor, do not call it through the trait path unless the concrete implementor type is written explicitly.
 - Return only Rust code blocks, one case module per code block, with no prose outside the code blocks.

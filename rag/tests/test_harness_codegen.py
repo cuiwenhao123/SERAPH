@@ -80,3 +80,29 @@ fn main() {
 
     with pytest.raises(ValueError, match="run_case"):
         write_harnesses_from_response(prompt_path, response_path, output_dir, round_no=4)
+
+
+def test_write_harnesses_accepts_module_wrapped_run_case(tmp_path):
+    prompt_path = tmp_path / "harness_prompt_005.json"
+    response_path = tmp_path / "llm_response.md"
+    output_dir = tmp_path / "fuzz"
+    prompt_path.write_text(
+        json.dumps({"target_api_id": "api::fixture::Buffer::get_unchecked"}),
+        encoding="utf-8",
+    )
+    response_path.write_text(
+        """```rust
+pub mod case_1 {
+    pub fn run_case(input: &[u8]) {
+        let _ = input;
+        println!("SERAPH_STEP_ENTER:1:api::fixture::Buffer::get_unchecked");
+        println!("SERAPH_STEP_OK:1:api::fixture::Buffer::get_unchecked");
+    }
+}
+```""",
+        encoding="utf-8",
+    )
+
+    written = write_harnesses_from_response(prompt_path, response_path, output_dir, round_no=5)
+
+    assert [path.name for path in written] == ["harness_005_01.rs"]

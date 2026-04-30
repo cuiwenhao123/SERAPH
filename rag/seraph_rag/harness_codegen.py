@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Union
 
 _CODE_FENCE_RE = re.compile(r"```(?:rust|rs)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
-_RUN_CASE_RE = re.compile(r"(?m)^pub\s+fn\s+run_case\s*\(\s*input\s*:\s*&\[\s*u8\s*\]\s*\)")
+_RUN_CASE_RE = re.compile(r"(?m)^\s*pub\s+fn\s+run_case\s*\(\s*input\s*:\s*&\[\s*u8\s*\]\s*\)")
 
 
 def extract_rust_code_blocks(response_text: str) -> List[str]:

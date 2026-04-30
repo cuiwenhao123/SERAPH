@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from http.client import IncompleteRead, RemoteDisconnected
+from ssl import SSLEOFError
 from typing import Any, Dict, List, Mapping, Optional, Protocol
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
@@ -19,6 +22,7 @@ class OpenAICompatibleEmbedder:
     api_key: str = ""
     api_path: str = "/embeddings"
     timeout_seconds: float = 180.0
+    max_retries: int = 1
     extra_headers: Optional[Mapping[str, str]] = None
     extra_body: Optional[Mapping[str, Any]] = None
 
@@ -37,8 +41,17 @@ class OpenAICompatibleEmbedder:
             headers=_embedding_headers(self.api_key, self.extra_headers),
             method="POST",
         )
-        with urlopen(request, timeout=self.timeout_seconds) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        payload = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                with urlopen(request, timeout=self.timeout_seconds) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                break
+            except Exception as exc:
+                if not _is_retryable_embedding_error(exc) or attempt >= self.max_retries:
+                    raise
+        if payload is None:
+            raise ValueError("embedding request did not produce a response payload")
         data = payload.get("data")
         if not isinstance(data, list):
             raise ValueError("embedding response missing data list")
@@ -90,6 +103,7 @@ def build_embedder() -> Embedder:
             model=model,
             api_path=os.environ.get("SERAPH_EMBEDDING_API_PATH", "/embeddings"),
             timeout_seconds=float(os.environ.get("SERAPH_EMBEDDING_TIMEOUT_SECONDS", "180")),
+            max_retries=int(os.environ.get("SERAPH_EMBEDDING_MAX_RETRIES", "1")),
             extra_headers=_json_object_env("SERAPH_EMBEDDING_EXTRA_HEADERS"),
             extra_body=_json_object_env("SERAPH_EMBEDDING_EXTRA_BODY"),
         )
@@ -172,3 +186,13 @@ def _embedding_index(item: Any) -> int:
         if isinstance(index, int):
             return index
     return 0
+
+
+def _is_retryable_embedding_error(exc: Exception) -> bool:
+    if isinstance(exc, (IncompleteRead, RemoteDisconnected, SSLEOFError)):
+        return True
+    if isinstance(exc, HTTPError):
+        return exc.code == 429 or 500 <= exc.code <= 599
+    if isinstance(exc, URLError):
+        return True
+    return False

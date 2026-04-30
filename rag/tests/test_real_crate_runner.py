@@ -69,3 +69,38 @@ def test_compile_harness_runs_cargo_build(tmp_path, monkeypatch):
     assert captured["kwargs"]["capture_output"] is True
     assert captured["kwargs"]["text"] is True
     assert (workspace / "_cargo_projects" / "harness_001_02" / "src" / "case_impl.rs").exists()
+
+
+def test_ensure_cargo_project_supports_module_wrapped_run_case(tmp_path):
+    workspace = tmp_path / "workspace"
+    fuzz_dir = workspace / "fuzz"
+    harness = fuzz_dir / "harness_001_03.rs"
+    fuzz_dir.mkdir(parents=True)
+    harness.write_text(
+        "\n".join(
+            [
+                "pub mod case_1 {",
+                "    pub fn run_case(input: &[u8]) {",
+                "        let _ = input;",
+                "    }",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "crate_config.json").write_text(
+        json.dumps(
+            {
+                "crate_dir": "/tmp/target-crate",
+                "package_name": "moonfire-ffmpeg",
+                "crate_import_name": "moonfire_ffmpeg",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    project_dir = ensure_cargo_project(harness)
+
+    main_rs = (project_dir / "src/main.rs").read_text(encoding="utf-8")
+    assert "case_impl::case_1::run_case(&data);" in main_rs

@@ -177,10 +177,18 @@ def _normalize_diagnosis(
         "other_runtime_issue",
     }:
         classification = "asan_bug" if sanitizer_hit else "other_runtime_issue"
-    is_bug = bool(diagnosis.get("is_bug")) or classification == "asan_bug" or sanitizer_hit
     summary = diagnosis.get("summary")
     if not isinstance(summary, str) or not summary.strip():
         summary = "runtime issue recorded from smoke-run output"
+    if (
+        not sanitizer_hit
+        and classification in {"panic_or_crash", "other_runtime_issue"}
+        and _looks_like_capacity_precondition_panic(summary, combined_output)
+    ):
+        classification = "invalid_input_or_precondition"
+        is_bug = False
+    else:
+        is_bug = bool(diagnosis.get("is_bug")) or classification == "asan_bug" or sanitizer_hit
     return {
         "classification": classification,
         "summary": summary.strip(),
@@ -190,6 +198,15 @@ def _normalize_diagnosis(
 
 def _looks_like_sanitizer_issue(output: str) -> bool:
     return any(marker in output for marker in SANITIZER_MARKERS)
+
+
+def _looks_like_capacity_precondition_panic(summary: str, output: str) -> bool:
+    text = f"{summary}\n{output}".lower()
+    return (
+        "arena overflow:" in text
+        or "exceed arena capacity" in text
+        or "exceeded arena capacity" in text
+    )
 
 
 def _extract_target_api_id(context_path: Path) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional, Union
 
@@ -41,8 +42,11 @@ def index_knowledge(
     knowledge: dict,
     vectordb: Union[str, Path],
     embedder: Optional[Embedder] = None,
+    batch_size: Optional[int] = None,
 ) -> None:
     embedder = embedder or build_embedder()
+    if batch_size is None:
+        batch_size = int(os.environ.get("SERAPH_EMBEDDING_BATCH_SIZE", "8"))
     client = persistent_client(vectordb)
     api_collection = client.get_or_create_collection(
         name="api_docs",
@@ -50,20 +54,23 @@ def index_knowledge(
     )
     api_docs = build_api_documents(knowledge)
     if api_docs:
-        api_collection.upsert(
-            ids=[doc.doc_id for doc in api_docs],
-            embeddings=embedder.encode([doc.text for doc in api_docs]),
-            documents=[doc.text for doc in api_docs],
-            metadatas=[doc.metadata for doc in api_docs],
-        )
+        _upsert_documents_in_batches(api_collection, api_docs, embedder, batch_size=batch_size)
     idiom_collection = client.get_or_create_collection(
         name="rust_idioms",
         metadata={"hnsw:space": "cosine", "seraph:embedder": embedder_backend_name()},
     )
     idioms = bundled_idioms()
-    idiom_collection.upsert(
-        ids=[doc.doc_id for doc in idioms],
-        embeddings=embedder.encode([doc.text for doc in idioms]),
-        documents=[doc.text for doc in idioms],
-        metadatas=[doc.metadata for doc in idioms],
-    )
+    _upsert_documents_in_batches(idiom_collection, idioms, embedder, batch_size=batch_size)
+
+
+def _upsert_documents_in_batches(collection, documents, embedder: Embedder, *, batch_size: int) -> None:
+    if batch_size <= 0:
+        batch_size = len(documents) or 1
+    for start in range(0, len(documents), batch_size):
+        batch = documents[start : start + batch_size]
+        collection.upsert(
+            ids=[doc.doc_id for doc in batch],
+            embeddings=embedder.encode([doc.text for doc in batch]),
+            documents=[doc.text for doc in batch],
+            metadatas=[doc.metadata for doc in batch],
+        )

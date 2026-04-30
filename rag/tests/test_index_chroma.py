@@ -43,3 +43,22 @@ def test_render_context_from_stores_includes_vector_idioms(tmp_path):
     assert "## Rust Idioms" in markdown
     assert "unsafe" in markdown.lower()
     assert "fixture_crate::Buffer::get_unchecked" in markdown
+
+
+def test_index_knowledge_batches_embedding_requests(tmp_path):
+    class RecordingEmbedder:
+        def __init__(self):
+            self.batch_sizes = []
+
+        def encode(self, texts):
+            self.batch_sizes.append(len(texts))
+            return [[float(index)] for index, _ in enumerate(texts)]
+
+    vectordb = tmp_path / "vectordb"
+    knowledge = load_knowledge(FIXTURE)
+    embedder = RecordingEmbedder()
+
+    index_knowledge(knowledge, vectordb, embedder=embedder, batch_size=2)
+
+    assert embedder.batch_sizes[:2] == [2, 1]
+    assert all(size <= 2 for size in embedder.batch_sizes)
