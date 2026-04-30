@@ -23,7 +23,7 @@ fn temp_dir(name: &str) -> PathBuf {
     path
 }
 
-fn write_minimal_workspace(workspace: &Path) -> PathBuf {
+fn write_minimal_workspace(workspace: &Path, default_corpus_dir: Option<&Path>) -> PathBuf {
     let reports_dir = workspace.join("reports");
     let project_dir = workspace.join("_cargo_projects").join("merged_fixture");
     let src_dir = project_dir.join("src");
@@ -38,10 +38,13 @@ fn write_minimal_workspace(workspace: &Path) -> PathBuf {
     )
     .expect("write Cargo.toml");
     fs::write(src_dir.join("main.rs"), "fn main() {}\n").expect("write main.rs");
+    let default_corpus_field = default_corpus_dir
+        .map(|path| format!(",\"default_corpus_dir\":\"{}\"", path.display()))
+        .unwrap_or_default();
     fs::write(
         &merge_report,
         format!(
-            "{{\"crate_name\":\"fixture\",\"manifest_path\":\"{}\",\"target_name\":\"merged_fixture\"}}",
+            "{{\"crate_name\":\"fixture\",\"manifest_path\":\"{}\",\"target_name\":\"merged_fixture\"{default_corpus_field}}}",
             project_dir.join("Cargo.toml").display()
         ),
     )
@@ -54,7 +57,7 @@ fn write_minimal_workspace(workspace: &Path) -> PathBuf {
 fn bootstrap_fuzz_target_dry_run_prints_regular_asan_and_cmplog_commands() {
     let repo = repo_root();
     let workspace = temp_dir("bootstrap-afl-file");
-    let merge_report = write_minimal_workspace(&workspace);
+    let merge_report = write_minimal_workspace(&workspace, None);
 
     let output = Command::new("bash")
         .current_dir(&repo)
@@ -106,7 +109,7 @@ fn bootstrap_fuzz_target_dry_run_prints_regular_asan_and_cmplog_commands() {
 fn bootstrap_fuzz_target_dry_run_supports_stdin_mode() {
     let repo = repo_root();
     let workspace = temp_dir("bootstrap-afl-stdin");
-    let merge_report = write_minimal_workspace(&workspace);
+    let merge_report = write_minimal_workspace(&workspace, None);
 
     let output = Command::new("bash")
         .current_dir(&repo)
@@ -133,4 +136,109 @@ fn bootstrap_fuzz_target_dry_run_supports_stdin_mode() {
     assert!(stdout.contains("-M asan_main"));
     assert!(stdout.contains("-S cmplog_aux"));
     assert!(!stdout.contains("@@"));
+}
+
+#[test]
+fn bootstrap_fuzz_target_dry_run_prefers_merge_default_corpus_dir() {
+    let repo = repo_root();
+    let workspace = temp_dir("bootstrap-afl-default-corpus");
+    let selector_safe_corpus = workspace.join("afl/merged_fixture/selector_safe_corpus");
+    let merge_report = write_minimal_workspace(&workspace, Some(&selector_safe_corpus));
+
+    let output = Command::new("bash")
+        .current_dir(&repo)
+        .args([
+            "scripts/bootstrap-fuzz-target.sh",
+            "--workspace-dir",
+            workspace.to_str().expect("workspace str"),
+            "--merge-report",
+            merge_report.to_str().expect("merge report str"),
+            "--dry-run",
+        ])
+        .output()
+        .expect("run bootstrap script");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf8");
+    assert!(stdout.contains(
+        selector_safe_corpus
+            .to_str()
+            .expect("selector-safe corpus str")
+    ));
+    assert!(!stdout.contains(
+        workspace
+            .join("afl/merged_fixture/corpus")
+            .to_str()
+            .expect("legacy corpus str")
+    ));
+}
+
+#[test]
+fn bootstrap_fuzz_target_dry_run_preserves_explicit_corpus_override() {
+    let repo = repo_root();
+    let workspace = temp_dir("bootstrap-afl-corpus-override");
+    let selector_safe_corpus = workspace.join("afl/merged_fixture/selector_safe_corpus");
+    let explicit_corpus = workspace.join("custom/corpus");
+    let merge_report = write_minimal_workspace(&workspace, Some(&selector_safe_corpus));
+
+    let output = Command::new("bash")
+        .current_dir(&repo)
+        .args([
+            "scripts/bootstrap-fuzz-target.sh",
+            "--workspace-dir",
+            workspace.to_str().expect("workspace str"),
+            "--merge-report",
+            merge_report.to_str().expect("merge report str"),
+            "--corpus-dir",
+            explicit_corpus.to_str().expect("explicit corpus str"),
+            "--dry-run",
+        ])
+        .output()
+        .expect("run bootstrap script");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf8");
+    assert!(stdout.contains(explicit_corpus.to_str().expect("explicit corpus str")));
+    assert!(!stdout.contains(
+        selector_safe_corpus
+            .to_str()
+            .expect("selector-safe corpus str")
+    ));
+}
+
+#[test]
+fn bootstrap_fuzz_target_dry_run_falls_back_when_merge_default_corpus_dir_missing() {
+    let repo = repo_root();
+    let workspace = temp_dir("bootstrap-afl-legacy-corpus");
+    let merge_report = write_minimal_workspace(&workspace, None);
+    let legacy_corpus = workspace.join("afl/merged_fixture/corpus");
+
+    let output = Command::new("bash")
+        .current_dir(&repo)
+        .args([
+            "scripts/bootstrap-fuzz-target.sh",
+            "--workspace-dir",
+            workspace.to_str().expect("workspace str"),
+            "--merge-report",
+            merge_report.to_str().expect("merge report str"),
+            "--dry-run",
+        ])
+        .output()
+        .expect("run bootstrap script");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf8");
+    assert!(stdout.contains(legacy_corpus.to_str().expect("legacy corpus str")));
 }

@@ -144,12 +144,16 @@ fi
 [[ -f "$merge_report_path" ]] || fail "merge report not found: $merge_report_path"
 merge_report_path="$(cd "$(dirname "$merge_report_path")" && pwd)/$(basename "$merge_report_path")"
 
-read -r manifest_path target_name < <(
+read -r manifest_path target_name default_corpus_dir_from_report < <(
   python3 - "$merge_report_path" <<'PY'
 import json
 import sys
 payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
-print(payload["manifest_path"], payload["target_name"])
+print(
+    payload["manifest_path"],
+    payload["target_name"],
+    payload.get("default_corpus_dir", ""),
+)
 PY
 )
 
@@ -158,7 +162,13 @@ PY
 [[ -f "$manifest_path" ]] || fail "missing merged Cargo manifest: $manifest_path"
 
 campaign_root="$workspace_dir/afl/$target_name"
-corpus_dir="${corpus_dir:-$campaign_root/corpus}"
+if [[ -n "$corpus_dir" ]]; then
+  :
+elif [[ -n "$default_corpus_dir_from_report" ]]; then
+  corpus_dir="$default_corpus_dir_from_report"
+else
+  corpus_dir="$campaign_root/corpus"
+fi
 findings_dir="${findings_dir:-$campaign_root/findings}"
 afl_target_dir="${afl_target_dir:-$workspace_dir/_afl_target}"
 regular_target_dir="$afl_target_dir/regular"
