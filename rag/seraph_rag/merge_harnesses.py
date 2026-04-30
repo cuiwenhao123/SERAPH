@@ -93,12 +93,11 @@ def write_merged_harnesses(
     report_path = reports_dir / "merge_{}.json".format(crate_dir_name)
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     write_selector_safe_corpus_summary(
-        summary_path=default_corpus_meta_dir / "summary.json",
+        meta_dir=default_corpus_meta_dir,
         target_name=target_name,
         manifest_path=project_dir / "Cargo.toml",
         merge_report_path=report_path,
         corpus_dir=default_corpus_dir,
-        meta_dir=default_corpus_meta_dir,
         selected_case_count=len(selected_cases),
         safe_seed_count=len(default_seed_files),
         seed_files=default_seed_files,
@@ -235,21 +234,23 @@ def encode_selector(selector: int) -> bytes:
 
 def write_selector_safe_corpus(corpus_dir: Path, selected_cases: List[Path]) -> List[Path]:
     corpus_dir.mkdir(parents=True, exist_ok=True)
+    existing_seed_files = set(corpus_dir.glob("selector_*.bin"))
     seed_files = []
     for selector, _case_path in enumerate(selected_cases):
         seed_path = corpus_dir / "selector_{:04d}.bin".format(selector)
         seed_path.write_bytes(encode_selector(selector))
         seed_files.append(seed_path)
+    for stale_seed_path in existing_seed_files.difference(seed_files):
+        stale_seed_path.unlink()
     return seed_files
 
 
 def write_selector_safe_corpus_summary(
-    summary_path: Path,
+    meta_dir: Path,
     target_name: str,
     manifest_path: Path,
     merge_report_path: Path,
     corpus_dir: Path,
-    meta_dir: Path,
     selected_case_count: int,
     safe_seed_count: int,
     seed_files: List[Path],
@@ -267,7 +268,10 @@ def write_selector_safe_corpus_summary(
         "crash_seed_count": 0,
         "seed_files": [str(path) for path in seed_files],
     }
-    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (meta_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _sanitize_name(value: str) -> str:
